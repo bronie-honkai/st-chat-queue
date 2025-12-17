@@ -1,0 +1,243 @@
+#attachment_queue_block {
+  display: none;
+}
+
+#attachment_queue_block .right-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor);
+  background-color: var(--SmartThemeBlur);
+  backdrop-filter: blur(calc(var(--SmartThemeBlurStrength, 4) * 1px));
+}
+
+#attachment_queue_block .right-nav-content {
+  flex: 1;
+  padding: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#attachment_queue_block .right-nav-footer {
+  padding: 8px 10px;
+  border-top: 1px solid var(--SmartThemeBorderColor);
+}
+
+.attachment-queue-panel-title {
+  font-weight: 600;
+}
+
+.attachment-queue-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.attachment-queue-list {
+  max-height: 100%;
+  overflow-y: auto;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.15);
+  padding: 4px;
+}
+
+.attachment-queue-item {
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.15);
+}
+
+.attachment-queue-item + .attachment-queue-item {
+  margin-top: 4px;
+}
+
+.attachment-queue-item-icon {
+  font-size: 1rem;
+}
+
+.attachment-queue-drag-handle {
+  cursor: grab;
+  margin-right: 6px;
+  color: var(--SmartThemeMainTextColor);
+  opacity: 0.9;
+}
+
+.attachment-queue-item-dragging {
+  opacity: 0.6;
+}
+
+.attachment-queue-item-dragover {
+  outline: 1px dashed var(--SmartThemeAccentColor);
+}
+
+.attachment-queue-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--SmartThemeMainTextColor);
+}
+
+.attachment-queue-item-status {
+  margin-left: 6px;
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.attachment-queue-item-status-error {
+  color: var(--SmartThemeErrorColor, #ff4d4f);
+}
+
+.attachment-queue-item-remove {
+  border: none;
+  background: transparent;
+  color: var(--SmartThemeMainTextColor);
+  cursor: pointer;
+}
+
+.attachment-queue-controls {
+  justify-content: flex-end;
+}
+
+.attachment-queue-status {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.attachment-queue-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, #444);
+}
+
+.attachment-queue-panel-title {
+  font-weight: 600;
+}
+
+.attachment-queue-panel-body {
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-queue-panel-footer {
+  padding: 8px 10px;
+  border-top: 1px solid var(--SmartThemeBorderColor, #444);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.attachment-queue-close {
+  border: none;
+  background: transparent;
+  color: var(--SmartThemeMainTextColor);
+  cursor: pointer;
+}
+
+.attachment-queue-dropzone {
+  border: 2px dashed var(--SmartThemeBorderColor);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--SmartThemeMainTextColor);
+  background-color: rgba(0, 0, 0, 0.1);
+  transition: background-color 0.15s ease-out, border-color 0.15s ease-out;
+}
+
+.attachment-queue-dropzone-hover {
+  border-color: var(--SmartThemeAccentColor);
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+.attachment-queue-drawer-header {
+  margin-bottom: 8px;
+}
+
+.attachment-queue-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+@media (min-width: 900px) {
+  .attachment-queue-drawer-body {
+    flex-direction: row;
+  }
+
+  .attachment-queue-list {
+    flex: 1;
+  }
+
+  .attachment-queue-preview {
+    flex: 1;
+  }
+}
+
+.attachment-queue-preview {
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.15);
+  padding: 8px;
+  min-height: 120px;
+  display: none; /* 默认折叠 */
+}
+
+.attachment-queue-preview-image {
+  max-width: 100%;
+  max-height: 320px;
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+}
+
+.attachment-queue-preview-text {
+  white-space: pre-wrap;
+  font-family: var(--font-monospace, monospace);
+  font-size: 0.85rem;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.attachment-queue-preview-generic {
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+/* 操作图标背景样式：使图标呈现带背景的方块 */
+.attachment-queue-item-actions {
+  display: inline-flex;
+  align-items: center;
+}
+.attachment-queue-item-actions button {
+  border: none;
+  background: rgba(255,255,255,0.04);
+  color: var(--SmartThemeMainTextColor);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-left: 6px;
+  font-size: 0.9rem;
+}
+.attachment-queue-item-actions button:hover {
+  background: rgba(255,255,255,0.10);
+}
+
+/* 小按钮与右下角 X 保持样式一致 */
+.attachment-queue-item-remove {
+  border: none;
+  background: transparent;
+  color: var(--SmartThemeMainTextColor);
+  cursor: pointer;
+  margin-left: 8px;
+}
+
