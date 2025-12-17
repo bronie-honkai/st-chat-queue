@@ -1,6 +1,6 @@
 # 📜 SillyTavern Chat Queue (聊天队列)
 
-![Version](https://img.shields.io/badge/Version-1.0.0-blue?style=flat-square) ![SillyTavern](https://img.shields.io/badge/SillyTavern-Extension-orange?style=flat-square)
+![Version](https://img.shields.io/badge/Version-1.0.1-blue?style=flat-square) ![SillyTavern](https://img.shields.io/badge/SillyTavern-Extension-orange?style=flat-square)
 
 **Chat Queue** 是一个为 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 设计的高级自动化插件。
 
