@@ -708,8 +708,12 @@ function initAttachmentQueueWandButton() {
     }
 
     $('#attachment_queue_wand_button').on('click', async () => {
-        await initAttachmentQueueDrawer();
+        // 初始化右侧菜单
+        await initAttachmentQueueRightMenu();
+        // 打开右侧面板并显示队列选项卡
+        toggleRightDrawer(RIGHT_MENU_ID);
 
+        // 打开文件选择器
         const inputEl = /** @type {HTMLInputElement | null} */ (document.getElementById('attachment_queue_file_input'));
         if (!inputEl) return;
 
@@ -722,9 +726,6 @@ function initAttachmentQueueWandButton() {
         } catch {
             inputEl.click();
         }
-
-        // 选完文件后，addFilesToQueue 会自动展开面板；这里保证至少是显示的
-        $('#attachment_queue_panel').show();
     });
 }
 
