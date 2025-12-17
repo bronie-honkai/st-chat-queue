@@ -1,7 +1,7 @@
 {
     "display_name": "st_Chat Queue",
     "name": "st_chat_queue",
-    "version": "1.0.9",
+    "version": "1.0.10",
     "author": "User",
     "description": "Automate chat flow with queued text and attachments.",
     "loading_order": 2,
