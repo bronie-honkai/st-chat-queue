@@ -246,134 +246,109 @@ function addTextOnlyToQueue(text = '') {
 }
 
 /**
+ * 新增辅助函数：等待 AI 回复完成 (视觉轮询)
+ * 逻辑：死死盯着发送按钮，直到它变回"纸飞机"且可用
+ */
+function waitForAiToFinish() {
+    return new Promise((resolve) => {
+        console.log('[Chat Queue] 开始监听 AI 回复状态 (视觉轮询)...');
+        
+        // 初始安全等待：给酒馆一点时间把按钮变成"停止"状态
+        setTimeout(() => {
+            const checkInterval = setInterval(() => {
+                // 如果用户手动点了停止队列，强行终止监听
+                if (!isRunning) {
+                    clearInterval(checkInterval);
+                    resolve('stopped_by_user');
+                    return;
+                }
+
+                const $btn = $('#send_but');
+                
+                // 1. 检查按钮是否存在
+                if ($btn.length === 0) return;
+
+                // 2. 检查关键标识
+                const isStopping = $btn.find('.fa-stop, .fa-square').length > 0 || $btn.attr('title') === 'Stop generation';
+                const hasPlane = $btn.find('.fa-paper-plane').length > 0;
+                const isDisabled = $btn.prop('disabled') || $btn.hasClass('disabled');
+
+                // 3. 判断逻辑：(有飞机图标) 且 (不是停止状态) 且 (没被禁用) = 完成
+                if (hasPlane && !isStopping && !isDisabled) {
+                    console.log('[Chat Queue] 检测到纸飞机图标回归，AI 回复完成。');
+                    clearInterval(checkInterval);
+                    resolve('done');
+                }
+            }, 500); // 每 0.5 秒看一眼
+        }, 2000); // 先等 2 秒，让子弹飞一会儿
+    });
+}
+
+/**
  * 核心：上传并发送单个队列项（支持文本和附件）
- * 策略：纯 UI 模拟操作，通过点击发送按钮实现自动发送
+ * 修改：移除了 Generate() 调用，改为纯粹的 UI 模拟点击
  */
 async function uploadAndSend(item) {
-    console.log('[Chat Queue] Processing item:', item.id, 'text:', item.text.slice(0, 30), 'file:', item.file?.name);
+    console.log('[Chat Queue] Processing item:', item.id);
 
     // 1. 处理文件
     if (item.file) {
         const fileInput = document.getElementById('file_form_input');
-        if (!(fileInput instanceof HTMLInputElement)) {
-            throw new Error('file_form_input not found');
+        if (fileInput) {
+            const dt = new DataTransfer();
+            dt.items.add(item.file);
+            fileInput.files = dt.files;
+            
+            // 触发 change 事件，让 SillyTavern 识别并挂载附件
+            $('#file_form_input').trigger('change');
+            
+            // 给予足够的时间让 ST 处理文件
+            await new Promise(r => setTimeout(r, 800)); 
+            console.log('[Chat Queue] File added to input');
         }
-
-        // 用 DataTransfer 模拟用户选择文件
-        const dt = new DataTransfer();
-        dt.items.add(item.file);
-        fileInput.files = dt.files;
-
-        // 触发 change 事件，ST 会解析附件
-        $('#file_form_input').trigger('change');
-
-        // 等待附件挂载和 UI 更新
-        await new Promise(r => setTimeout(r, 500));
-        console.log('[Chat Queue] File added to input');
     }
 
     // 2. 处理文本
     const $textarea = $('#send_textarea');
     if ($textarea.length) {
+        // 先清空，再设置值
+        $textarea.val('').trigger('input'); 
         $textarea.val(item.text || '');
+        
+        // 必须触发 input 和 change，ST 才会检测到内容
         $textarea.trigger('input');
         $textarea.trigger('change');
-        // 等待按钮状态更新（从灰色变绿）
-        await new Promise(r => setTimeout(r, 300));
+        
+        // 等待 UI 响应
+        await new Promise(r => setTimeout(r, 500));
         console.log('[Chat Queue] Text content set to textarea');
     }
 
     // 3. 点击发送按钮
-    console.log('[Chat Queue] Attempting to trigger send...');
-    const sendBtn = document.getElementById('send_but');
+    const $sendBtn = $('#send_but');
+    if ($sendBtn.length) {
+        // 尝试强行移除禁用类，防止 UI 状态滞后
+        $sendBtn.removeClass('disabled').prop('disabled', false);
 
-    if (sendBtn) {
-        // 发送按钮存在，直接点击
-        console.log('[Chat Queue] Found send button, clicking...');
-        try {
-            sendBtn.click();
-            console.log('[Chat Queue] Send button clicked successfully');
-        } catch (e) {
-            console.warn('[Chat Queue] sendBtn.click() failed:', e.message);
-            // 如果 click() 失败，尝试 jQuery trigger
-            try {
-                $(sendBtn).trigger('click');
-                console.log('[Chat Queue] Send triggered via jQuery');
-            } catch (ee) {
-                throw new Error('Failed to trigger send button: ' + ee.message);
-            }
-        }
+        console.log('[Chat Queue] Clicking send button...');
+        // 优先使用原生 click
+        $sendBtn[0].click(); 
     } else {
-        // 发送按钮找不到，作为备选手段尝试 Generate()
-        console.log('[Chat Queue] Send button not found, attempting fallback Generate() call');
-        if (typeof Generate === 'function') {
-            try {
-                await Generate('normal');
-                console.log('[Chat Queue] Fallback Generate() call completed');
-            } catch (e) {
-                throw new Error('Generate() fallback failed: ' + e.message);
-            }
-        } else {
-            throw new Error('Send button not found and Generate is not available');
-        }
+        throw new Error('Send button (#send_but) not found!');
     }
-
-    // 4. 等待 generation_ended 事件
-    console.log('[Chat Queue] Waiting for AI generation to complete...');
-    await new Promise((resolve) => {
-        let settled = false;
-
-        const onEnded = () => {
-            if (settled) return;
-            settled = true;
-            console.log('[Chat Queue] Generation ended event received');
-            resolve();
-        };
-
-        // 监听 generation_ended 事件（如果 eventSource 可用）
-        try {
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
-                const cb = () => { onEnded(); };
-                eventSource.on(event_types.GENERATION_ENDED, cb);
-
-                // 清理监听器
-                const cleanupInterval = setInterval(() => {
-                    if (settled) {
-                        try {
-                            if (eventSource.off) eventSource.off(event_types.GENERATION_ENDED, cb);
-                        } catch (e) {}
-                        clearInterval(cleanupInterval);
-                    }
-                }, 200);
-            }
-        } catch (e) {
-            console.warn('[Chat Queue] Failed to register generation_ended listener:', e.message);
-        }
-
-        // 超时回退：30 秒后如果未收到事件，继续
-        setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            console.warn('[Chat Queue] generation_ended timeout (30s), continuing...');
-            resolve();
-        }, 30000);
-    });
-
-    console.log('[Chat Queue] uploadAndSend completed');
 }
 
 /**
- * 循环处理器 - 支持发送文本和附件
+ * 循环处理器
+ * 修改：使用 waitForAiToFinish 替代 eventSource 监听
  */
 async function processNext() {
-    // 每次循环前检查是否仍在运行
     if (!isRunning) return;
 
-    // 找到下一个待发送的文件（从第一个 pending 开始）
+    // 找到下一个待发送项
     const nextIndex = queue.findIndex(q => q.status === 'pending');
 
     if (nextIndex === -1) {
-        // 没有待发送的文件了
         isRunning = false;
         toastr.success('队列全部完成！');
         updateStatusText();
@@ -388,27 +363,34 @@ async function processNext() {
     renderQueueList();
 
     try {
-        // --- 执行发送逻辑 ---
+        // 1. 执行发送动作 (填空 + 点按钮)
         await uploadAndSend(item);
 
-        // --- 等待 AI 回复完成 ---
-        // 我们不在这里死等，而是利用 EventSource 监听
-        // 设置一个标志位，等待 generation_ended 事件来触发下一次 processNext
-        // 这里只是为了保险，如果 60秒 没反应则超时
-        // 真正的递归调用移交给 eventSource 监听器
+        // 2. 等待 AI 回复 (视觉轮询)
+        await waitForAiToFinish();
+
+        // 3. 标记完成，继续下一个
+        if (isRunning) { 
+            item.status = 'done';
+            renderQueueList();
+            
+            // 休息 1 秒再发下一条
+            setTimeout(() => {
+                void processNext();
+            }, 1000);
+        }
 
     } catch (err) {
         console.error('[Chat Queue] Error:', err);
         item.status = 'error';
         item.error = String(err);
-        toastr.error(`项目 ${item.id} 发送失败`);
+        toastr.error(`项目 ${currentIndex + 1} 发送失败`);
 
-        // 如果出错，休息 1 秒继续下一个
-        currentIndex++;
-        setTimeout(() => {
-            if (isRunning) void processNext();
-        }, 1000);
+        // 出错后暂停
+        isRunning = false;
         renderQueueList();
+        updateStatusText();
+        updateSmartControlsVisibility();
     }
 }
 
@@ -999,3 +981,4 @@ const getFileExtension = (file) => {
     const name = file.name || '';
     return name.slice((name.lastIndexOf(".") - 1 >>> 0) + 2);
 };
+// ---------- 代码结束 ----------
