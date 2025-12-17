@@ -1,0 +1,17 @@
+#!/bin/sh
+# Tracked post-commit hook (copy this to .git/hooks/post-commit to enable auto-push)
+# This file is stored in the repo so collaborators can install it locally.
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)
+echo "[repo-hooks] pushing branch '$BRANCH' to origin..."
+
+# Attempt to push to origin; do not fail the commit if push fails
+git push origin "$BRANCH" >/dev/null 2>&1
+RC=$?
+if [ $RC -eq 0 ]; then
+  echo "[repo-hooks] push succeeded"
+else
+  echo "[repo-hooks] push failed (exit code: $RC). You may need to push manually."
+fi
+
+exit 0
