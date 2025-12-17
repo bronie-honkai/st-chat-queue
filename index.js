@@ -267,8 +267,8 @@ async function uploadAndSend(item) {
         // 触发 change 事件，ST 会显示文件名
         $('#file_form_input').trigger('change');
 
-        // 等待 UI 更新（增加延迟以确保充分处理）
-        await new Promise(r => setTimeout(r, 300));
+        // 等待 UI 更新
+        await new Promise(r => setTimeout(r, 100));
         console.log('[Chat Queue] File added to input');
     }
 
@@ -279,15 +279,13 @@ async function uploadAndSend(item) {
             $textarea.val(item.text);
             $textarea.trigger('input');
             $textarea.trigger('change');
-            // 等待更长时间以确保文本完全处理
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 100));
             console.log('[Chat Queue] Text content set to textarea');
         }
     }
 
-    // 等待一个额外的时间间隔，确保所有 UI 更新完成
-    await new Promise(r => setTimeout(r, 200));
-    console.log('[Chat Queue] UI fully updated, now triggering send...');
+    // 调用 Generate() 函数发送消息
+    console.log('[Chat Queue] Calling Generate()...');
     try {
         // 确保我们能获得 Generate 函数（有时在模块作用域中未导出为全局）
         let genFn = null;
@@ -351,35 +349,23 @@ async function uploadAndSend(item) {
             throw new Error(errorMsg);
         }
 
-        console.log('[Chat Queue] Calling Generate with automatic trigger enabled...');
-        // 不使用 automatic_trigger: false，让 Generate 自动处理发送
-        await genFn('normal');
-        console.log('[Chat Queue] Generate() completed and message should be sent');
+        console.log('[Chat Queue] Calling Generate with normal mode...');
+        await genFn('normal', { automatic_trigger: false });
+        console.log('[Chat Queue] Generate() returned — attempting to trigger actual send');
 
-        // 备用方案：如果 Generate 没有自动发送，主动点击发送按钮
-        // 等待 100ms 确保 UI 完全更新
-        await new Promise(r => setTimeout(r, 100));
-
+        // 有些 SillyTavern 配置下 Generate 仅会准备消息但不提交，确保点击发送按钮以真正发送
         const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
         if (sendBtn) {
-            const isDisabled = sendBtn.disabled || sendBtn.classList.contains('disabled');
-            if (!isDisabled) {
-                console.log('[Chat Queue] Attempting to click send button as backup');
-                try {
-                    // 使用 dispatchEvent 以最大化兼容性
-                    sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-                    console.log('[Chat Queue] Send button clicked via dispatchEvent');
-                } catch (e) {
-                    console.warn('[Chat Queue] dispatchEvent failed, trying jQuery:', e);
-                    try { $(sendBtn).trigger('click'); } catch (ee) {
-                        console.warn('[Chat Queue] jQuery trigger also failed:', ee);
-                    }
-                }
-            } else {
-                console.log('[Chat Queue] Send button is disabled, skipping click');
+            try {
+                // trigger click (use dispatchEvent to better mimic user)
+                sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                console.log('[Chat Queue] send button clicked');
+            } catch (e) {
+                try { $(sendBtn).trigger('click'); } catch (ee) { /* ignore */ }
             }
         } else {
-            console.log('[Chat Queue] Send button not found');
+            // 兼容：尝试使用 jQuery 选择器触发发送
+            try { $('#send_but').trigger('click'); } catch (e) { /* ignore */ }
         }
 
         // 等待 generation_ended 事件触发（由 eventSource 驱动）。作为保险，设置超时回退
