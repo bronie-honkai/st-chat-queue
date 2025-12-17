@@ -747,74 +747,69 @@ function initAttachmentQueueWandButton() {
 }
 
 jQuery(() => {
-    const tryInit = () => {
-        if (typeof eventSource === 'undefined' || typeof event_types === 'undefined') {
-            // 全局还没准备好，稍后重试（使用 typeof 避免 ReferenceError）
-            setTimeout(tryInit, 500);
-            return;
+    /**
+     * entryPoint: 核心启动函数，带防重入保护
+     */
+    const entryPoint = async () => {
+        if (window.st_chat_queue_loaded) return;
+        window.st_chat_queue_loaded = true;
+        console.log('🔥 Chat Queue: 插件正在启动...');
+
+        // 执行初始化
+        await initAttachmentQueueRightMenu();
+        initAttachmentQueueSmartControls();
+        initAttachmentQueueWandButton();
+
+        // 重写角色管理抽屉图标行为（与之前逻辑一致）
+        const $rightNavToggle = $('#unimportantYes');
+        if ($rightNavToggle.length) {
+            $rightNavToggle.off('click.stAttachmentQueue');
+            $rightNavToggle.off('click').on('click', async function () {
+                const $drawer = $('#right-nav-panel');
+                const isOpen = $drawer.hasClass('openDrawer');
+                const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
+
+                if (isOpen && isQueueVisible) {
+                    selectRightMenuWithAnimation('rm_characters_block');
+                    return;
+                }
+
+                await doNavbarIconClick.call(this);
+
+                const nowOpen = $drawer.hasClass('openDrawer');
+                if (nowOpen) {
+                    selectRightMenuWithAnimation('rm_characters_block');
+                }
+            });
         }
-
-        const doInitSetup = () => {
-            void initAttachmentQueueRightMenu();
-            initAttachmentQueueSmartControls();
-            initAttachmentQueueWandButton();
-
-            // 重写角色管理抽屉图标行为：
-            // - 正常情况下保持 ST 原生的开关逻辑
-            // - 当右侧已打开且当前显示的是队列时，点击只切回角色列表，而不收起抽屉
-            const $rightNavToggle = $('#unimportantYes'); // drawer-toggle 容器
-            if ($rightNavToggle.length) {
-                $rightNavToggle.off('click.stAttachmentQueue');
-
-                $rightNavToggle.off('click').on('click', async function () {
-                    const $drawer = $('#right-nav-panel');
-                    const isOpen = $drawer.hasClass('openDrawer');
-                    const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
-
-                    if (isOpen && isQueueVisible) {
-                        // 抽屉已打开且正在看队列：只切换到角色列表，不关闭抽屉
-                        selectRightMenuWithAnimation('rm_characters_block');
-                        return;
-                    }
-
-                    // 其它情况：沿用原生的开关逻辑
-                    await doNavbarIconClick.call(this);
-
-                    const nowOpen = $drawer.hasClass('openDrawer');
-                    if (nowOpen) {
-                        selectRightMenuWithAnimation('rm_characters_block');
-                    }
-                });
-            }
-        };
-
-        // 如果 event_types.APP_READY 可用则注册；无论是否可用，都尝试基于 DOM 就绪触发初始化（带重试）
-        if (typeof event_types !== 'undefined' && typeof event_types.APP_READY !== 'undefined') {
-            eventSource.on(event_types.APP_READY, doInitSetup);
-        }
-
-        // 有时 SillyTavern 的 DOM 元素在插件脚本执行时尚未创建，我们通过重试直到关键节点出现再初始化
-        let initAttempts = 0;
-        const ensureInit = () => {
-            const hasTopHolder = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
-            if (hasTopHolder) {
-                doInitSetup();
-                return;
-            }
-
-            initAttempts++;
-            if (initAttempts <= 20) {
-                setTimeout(ensureInit, 300);
-            } else {
-                // 退而求其次：即便没有找到关键节点，也尝试初始化一次（防止永久不执行）
-                doInitSetup();
-            }
-        };
-
-        ensureInit();
     };
 
-    tryInit();
+    // ---------- 三重保险启动策略 ----------
+    // 保险 1：标准事件（APP_READY）
+    try {
+        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.APP_READY !== 'undefined') {
+            eventSource.on(event_types.APP_READY, entryPoint);
+        }
+    } catch (e) {
+        // 忽略注册失败
+    }
+
+    // 保险 2：如果 DOM 元素已存在（表示我们来晚了），立即启动
+    const domAvailable = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
+    if (domAvailable) {
+        void entryPoint();
+        return;
+    }
+
+    // 保险 3：轮询，直到发现 Generate 或 eventSource 可用或关键 DOM 出现
+    const poll = setInterval(() => {
+        const readyAPIs = (typeof Generate !== 'undefined' && typeof eventSource !== 'undefined' && typeof event_types !== 'undefined');
+        const domNow = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
+        if (readyAPIs || domNow) {
+            clearInterval(poll);
+            void entryPoint();
+        }
+    }, 1000);
 });
 
 /**

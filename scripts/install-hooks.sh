@@ -12,4 +12,4 @@ mkdir -p "$HOOKS_DST"
 cp -v "$HOOKS_SRC"/* "$HOOKS_DST"/ || { echo "No hooks copied"; }
 chmod +x "$HOOKS_DST"/* || true
 
-echo "Hooks installed. If you use a non-standard hooks path, copy files manually to your hooks directory." 
+echo "Hooks installed. If you use a non-standard hooks path, copy files manually to your hooks directory."
