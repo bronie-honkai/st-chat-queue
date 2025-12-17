@@ -1,5 +1,4 @@
-import { event_types, eventSource, selectRightMenuWithAnimation, doNavbarIconClick, getRequestHeaders, Generate } from '../../../script.js';
-import { getBase64Async, getFileExtension } from '../../utils.js';
+/* global jQuery, $, eventSource, event_types, toastr, Generate */
 
 /** @typedef {{ id: string; text: string; file: File | null; status: 'pending' | 'sending' | 'done' | 'error'; error?: string }} QueueItem */
 
@@ -865,3 +864,18 @@ function reorderQueueById(sourceId, targetId) {
         currentIndex += 1;
     }
 }
+
+// 内联工具函数：替代原先对 utils.js 的依赖
+const getBase64Async = (file) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = (error) => reject(error);
+    });
+};
+
+const getFileExtension = (file) => {
+    const name = file.name || '';
+    return name.slice((name.lastIndexOf(".") - 1 >>> 0) + 2);
+};
