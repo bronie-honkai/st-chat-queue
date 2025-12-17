@@ -246,50 +246,106 @@ function addTextOnlyToQueue(text = '') {
 }
 
 /**
- * 新增辅助函数：等待 AI 回复完成 (视觉轮询)
- * 逻辑：死死盯着发送按钮，直到它变回"纸飞机"且可用
+ * 新增辅助函数：等待 AI 回复完成 (多重检测)
+ * 逻辑：同时使用事件监听 + 按钮状态 + 超时回退
  */
 function waitForAiToFinish() {
     return new Promise((resolve) => {
-        console.log('[Chat Queue] 开始监听 AI 回复状态 (视觉轮询)...');
-        
-        // 初始安全等待：给酒馆一点时间把按钮变成"停止"状态
+        console.log('[Chat Queue] 开始监听 AI 回复状态...');
+        let settled = false;
+
+        // 方案 1：eventSource 事件监听（最可靠）
+        const setupEventSourceListener = () => {
+            try {
+                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
+                    console.log('[Chat Queue] 已注册 GENERATION_ENDED 事件监听器');
+                    const cb = () => {
+                        if (settled) return;
+                        settled = true;
+                        console.log('[Chat Queue] 收到 GENERATION_ENDED 事件，AI 回复完成');
+                        clearInterval(checkInterval);
+                        resolve('event_received');
+                    };
+                    eventSource.on(event_types.GENERATION_ENDED, cb);
+                    return cb;
+                }
+            } catch (e) {
+                console.warn('[Chat Queue] eventSource 监听器注册失败:', e.message);
+            }
+            return null;
+        };
+
+        const eventCb = setupEventSourceListener();
+
+        // 方案 2：视觉轮询（备选，初始延迟 2 秒）
+        let checkInterval;
         setTimeout(() => {
-            const checkInterval = setInterval(() => {
-                // 如果用户手动点了停止队列，强行终止监听
+            checkInterval = setInterval(() => {
+                // 如果用户手动停止队列
                 if (!isRunning) {
+                    if (settled) return;
+                    settled = true;
+                    console.log('[Chat Queue] 用户停止队列');
                     clearInterval(checkInterval);
-                    resolve('stopped_by_user');
+                    resolve('user_stopped');
                     return;
                 }
 
                 const $btn = $('#send_but');
-                
-                // 1. 检查按钮是否存在
                 if ($btn.length === 0) return;
 
-                // 2. 检查关键标识
-                const isStopping = $btn.find('.fa-stop, .fa-square').length > 0 || $btn.attr('title') === 'Stop generation';
-                const hasPlane = $btn.find('.fa-paper-plane').length > 0;
+                // 检查按钮文本和类名以判断状态
+                const btnHtml = $btn.html();
+                const hasPlane = $btn.find('.fa-paper-plane').length > 0 || btnHtml.includes('fa-paper-plane');
+                const hasStop = $btn.find('.fa-stop, .fa-square').length > 0 || $btn.attr('title') === 'Stop generation';
                 const isDisabled = $btn.prop('disabled') || $btn.hasClass('disabled');
 
-                // 3. 判断逻辑：(有飞机图标) 且 (不是停止状态) 且 (没被禁用) = 完成
-                if (hasPlane && !isStopping && !isDisabled) {
-                    console.log('[Chat Queue] 检测到纸飞机图标回归，AI 回复完成。');
+                // 判断：有飞机 && 没有停止图标 && 没被禁用 = 完成
+                if (hasPlane && !hasStop && !isDisabled) {
+                    if (settled) return;
+                    settled = true;
+                    console.log('[Chat Queue] 检测到按钮恢复为可用状态，AI 回复完成');
                     clearInterval(checkInterval);
-                    resolve('done');
+                    if (eventCb && eventSource) {
+                        try {
+                            eventSource.off(event_types.GENERATION_ENDED, eventCb);
+                        } catch (e) {}
+                    }
+                    resolve('button_ready');
+                    return;
                 }
-            }, 500); // 每 0.5 秒看一眼
-        }, 2000); // 先等 2 秒，让子弹飞一会儿
+
+                // 日志：输出当前按钮状态（仅前几次）
+                if (window._queueDebugCount === undefined) window._queueDebugCount = 0;
+                if (window._queueDebugCount < 3) {
+                    console.log('[Chat Queue] 按钮状态检查:', { hasPlane, hasStop, isDisabled, html: btnHtml.substring(0, 50) });
+                    window._queueDebugCount++;
+                }
+            }, 500); // 每 0.5 秒检查一次
+        }, 2000); // 2 秒后开始轮询
+
+        // 方案 3：超时回退（60 秒）
+        setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.warn('[Chat Queue] 超时 (60s)，强制继续');
+            if (checkInterval) clearInterval(checkInterval);
+            if (eventCb && eventSource) {
+                try {
+                    eventSource.off(event_types.GENERATION_ENDED, eventCb);
+                } catch (e) {}
+            }
+            resolve('timeout');
+        }, 60000);
     });
 }
 
 /**
  * 核心：上传并发送单个队列项（支持文本和附件）
- * 修改：移除了 Generate() 调用，改为纯粹的 UI 模拟点击
+ * 修改：添加更详细的日志，便于调试
  */
 async function uploadAndSend(item) {
-    console.log('[Chat Queue] Processing item:', item.id);
+    console.log('[Chat Queue] 开始处理项目:', item.id);
 
     // 1. 处理文件
     if (item.file) {
@@ -298,13 +354,14 @@ async function uploadAndSend(item) {
             const dt = new DataTransfer();
             dt.items.add(item.file);
             fileInput.files = dt.files;
-            
+
+            console.log('[Chat Queue] 文件已添加到输入框:', item.file.name);
             // 触发 change 事件，让 SillyTavern 识别并挂载附件
             $('#file_form_input').trigger('change');
-            
+
             // 给予足够的时间让 ST 处理文件
-            await new Promise(r => setTimeout(r, 800)); 
-            console.log('[Chat Queue] File added to input');
+            await new Promise(r => setTimeout(r, 800));
+            console.log('[Chat Queue] 文件处理完成，等待 UI 同步');
         }
     }
 
@@ -312,16 +369,17 @@ async function uploadAndSend(item) {
     const $textarea = $('#send_textarea');
     if ($textarea.length) {
         // 先清空，再设置值
-        $textarea.val('').trigger('input'); 
+        $textarea.val('').trigger('input');
         $textarea.val(item.text || '');
-        
+
+        console.log('[Chat Queue] 文本已设置:', item.text.substring(0, 50));
         // 必须触发 input 和 change，ST 才会检测到内容
         $textarea.trigger('input');
         $textarea.trigger('change');
-        
+
         // 等待 UI 响应
         await new Promise(r => setTimeout(r, 500));
-        console.log('[Chat Queue] Text content set to textarea');
+        console.log('[Chat Queue] 文本处理完成');
     }
 
     // 3. 点击发送按钮
@@ -330,11 +388,28 @@ async function uploadAndSend(item) {
         // 尝试强行移除禁用类，防止 UI 状态滞后
         $sendBtn.removeClass('disabled').prop('disabled', false);
 
-        console.log('[Chat Queue] Clicking send button...');
+        console.log('[Chat Queue] 发送按钮状态:', {
+            disabled: $sendBtn.prop('disabled'),
+            hasDisabledClass: $sendBtn.hasClass('disabled'),
+            innerHTML: $sendBtn.html().substring(0, 100)
+        });
+
+        console.log('[Chat Queue] 正在点击发送按钮...');
         // 优先使用原生 click
-        $sendBtn[0].click(); 
+        try {
+            $sendBtn[0].click();
+            console.log('[Chat Queue] 发送按钮点击成功');
+        } catch (e) {
+            console.error('[Chat Queue] 原生 click 失败，尝试 jQuery:', e.message);
+            try {
+                $sendBtn.trigger('click');
+                console.log('[Chat Queue] jQuery trigger 点击成功');
+            } catch (ee) {
+                throw new Error('点击发送按钮失败: ' + ee.message);
+            }
+        }
     } else {
-        throw new Error('Send button (#send_but) not found!');
+        throw new Error('找不到发送按钮 (#send_but)!');
     }
 }
 
@@ -370,10 +445,10 @@ async function processNext() {
         await waitForAiToFinish();
 
         // 3. 标记完成，继续下一个
-        if (isRunning) { 
+        if (isRunning) {
             item.status = 'done';
             renderQueueList();
-            
+
             // 休息 1 秒再发下一条
             setTimeout(() => {
                 void processNext();
