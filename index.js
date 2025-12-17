@@ -788,13 +788,30 @@ jQuery(() => {
             }
         };
 
-        // 如果 event_types.APP_READY 可用则注册；否则作为回退立即初始化
+        // 如果 event_types.APP_READY 可用则注册；无论是否可用，都尝试基于 DOM 就绪触发初始化（带重试）
         if (typeof event_types !== 'undefined' && typeof event_types.APP_READY !== 'undefined') {
             eventSource.on(event_types.APP_READY, doInitSetup);
-        } else {
-            // 延迟执行到下一个任务周期，确保 DOM 已准备
-            setTimeout(doInitSetup, 0);
         }
+
+        // 有时 SillyTavern 的 DOM 元素在插件脚本执行时尚未创建，我们通过重试直到关键节点出现再初始化
+        let initAttempts = 0;
+        const ensureInit = () => {
+            const hasTopHolder = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
+            if (hasTopHolder) {
+                doInitSetup();
+                return;
+            }
+
+            initAttempts++;
+            if (initAttempts <= 20) {
+                setTimeout(ensureInit, 300);
+            } else {
+                // 退而求其次：即便没有找到关键节点，也尝试初始化一次（防止永久不执行）
+                doInitSetup();
+            }
+        };
+
+        ensureInit();
     };
 
     tryInit();
