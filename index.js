@@ -242,60 +242,57 @@ function addTextOnlyToQueue(text = '') {
 async function uploadAndSend(item) {
     console.log('[Chat Queue] UI Sim: Processing item:', item.id);
 
-    // 1. 处理附件
+    // 1. 处理附件（保持原样）
     if (item.file) {
         const fileInput = document.getElementById('file_form_input');
         if (fileInput) {
-            // 使用 DataTransfer 构造文件列表
             const dt = new DataTransfer();
             dt.items.add(item.file);
             fileInput.files = dt.files;
-
-            // 触发 change 事件，让 SillyTavern 识别并挂载附件
             $('#file_form_input').trigger('change');
-
-            // 给予足够的时间让 ST 处理文件 (解析、转码、UI显示)
-            // 500ms 通常足够，如果是大文件可能需要更久，这里给 800ms 保险
-            await new Promise(r => setTimeout(r, 800));
+            // 等待附件挂载和 UI 更新
+            await new Promise(r => setTimeout(r, 500));
             console.log('[Chat Queue] UI Sim: File input updated');
         }
     }
 
-    // 2. 处理文本
+    // 2. 处理文本（优化）
     const $textarea = $('#send_textarea');
     if ($textarea.length) {
-        // 先清空，再设置值，防止追加混乱
-        $textarea.val('').trigger('input');
         $textarea.val(item.text || '');
-
-        // 必须触发 input 和 change，ST 才会检测到内容并点亮发送按钮
         $textarea.trigger('input');
         $textarea.trigger('change');
-
-        // 等待 UI 响应 (按钮从禁用变为可用)
+        // 等待按钮变绿
         await new Promise(r => setTimeout(r, 300));
         console.log('[Chat Queue] UI Sim: Textarea updated');
     }
 
-    // 3. 点击发送按钮
-    const $sendBtn = $('#send_but');
-    if ($sendBtn.length) {
-        // 检查按钮是否被禁用
-        if ($sendBtn.prop('disabled') || $sendBtn.hasClass('disabled')) {
-            console.warn('[Chat Queue] Send button is disabled! ST might not be ready.');
-            // 尝试强行移除禁用类 (死马当活马医)
-            $sendBtn.removeClass('disabled').prop('disabled', false);
+    // 3. 触发发送（不在此等待 generation_ended）
+    const sendBtn = document.getElementById('send_but');
+    if (sendBtn) {
+        try {
+            sendBtn.click();
+            console.log('[Chat Queue] UI Sim: sendBtn.click() invoked');
+        } catch (e) {
+            console.warn('[Chat Queue] sendBtn.click() failed, trying jQuery trigger', e);
+            try { $('#send_but').trigger('click'); } catch (ee) { console.error('[Chat Queue] trigger failed', ee); }
         }
-
-        console.log('[Chat Queue] UI Sim: Clicking send button...');
-        // 优先使用原生 click，兼容性更好
-        $sendBtn[0].click();
-
-        // 双重保险：如果原生 click 没反应，触发 jQuery click
-        // setTimeout(() => $sendBtn.trigger('click'), 100);
-    } else {
-        throw new Error('Send button (#send_but) not found!');
+        // 函数不负责等待生成完成，返回 true 表示发送动作已触发
+        return true;
     }
+
+    // 备选：如果按钮不存在，再尝试调用 Generate（很少发生）
+    if (typeof Generate === 'function') {
+        try {
+            await Generate('normal');
+            return true;
+        } catch (e) {
+            console.error('[Chat Queue] Fallback Generate() failed', e);
+            throw e;
+        }
+    }
+
+    throw new Error('Send button not found and Generate fallback unavailable');
 }
 
 /**
@@ -355,105 +352,101 @@ function editTextItem(itemId) {
     if ($editor.length) {
         $list.addClass('displayNone');
         $preview.addClass('displayNone');
-        $editor.removeClass('displayNone');
+        async function processNext() {
+            if (!isRunning) return;
 
-        const $input = $('#attachment_queue_text_input');
-        $input.val(item.text);
-        $input.attr('data-edit-id', itemId);
-        $input.focus();
-    }
-}
+            // 找到下一个待发送项
+            const nextIndex = queue.findIndex(q => q.status === 'pending');
 
-function cancelEditTextItem() {
-    const $editor = $('#attachment_queue_editor');
-    const $list = $('#attachment_queue_list');
-    const $preview = $('#attachment_queue_preview');
+            if (nextIndex === -1) {
+                isRunning = false;
+                toastr.success('队列全部完成！');
+                updateStatusText();
+                renderQueueList();
+                return;
+            }
 
-    if ($editor.length) {
-        $editor.addClass('displayNone');
-        $list.removeClass('displayNone');
-        $preview.removeClass('displayNone');
+            currentIndex = nextIndex;
+            const item = queue[currentIndex];
+            item.status = 'sending';
+            renderQueueList();
 
-        const $input = $('#attachment_queue_text_input');
-        $input.val('');
-        $input.attr('data-edit-id', '');
-    }
-}
+            try {
+                // 发送前：若按钮当前显示为停止/生成图标，则先等它恢复
+                const waitForSendButtonReadyBefore = (timeoutMs = 120000) => {
+                    return new Promise((resolve) => {
+                        const start = Date.now();
+                        const iv = setInterval(() => {
+                            const $btn = $('#send_but');
+                            if ($btn.length && $btn.is(':visible') && $btn.css('display') !== 'none') {
+                                const isGenerating = $btn.find('.fa-stop, .fa-square').length > 0 || $btn.attr('title') === 'Stop generation';
+                                const isReady = $btn.find('.fa-paper-plane').length > 0 && !$btn.prop('disabled');
+                                if (!isGenerating && isReady) {
+                                    clearInterval(iv);
+                                    resolve(true);
+                                    return;
+                                }
+                            }
+                            if (Date.now() - start > timeoutMs) {
+                                clearInterval(iv);
+                                console.warn('[Chat Queue] waitForSendButtonReadyBefore timeout');
+                                resolve(false);
+                            }
+                        }, 500);
+                    });
+                };
 
-function bindDropZoneEvents($root) {
-    const $dropZone = $root.find('#attachment_queue_dropzone');
-    const $fileInput = $root.find('#attachment_queue_file_input');
+                await waitForSendButtonReadyBefore(120000);
 
-    $dropZone.on('dragenter dragover', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        $dropZone.addClass('attachment-queue-dropzone-hover');
-    });
-    $dropZone.on('dragleave dragend drop', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        $dropZone.removeClass('attachment-queue-dropzone-hover');
-    });
-    $dropZone.on('drop', (e) => {
-        const dt = e.originalEvent.dataTransfer;
-        if (dt) addFilesToQueue(dt.files);
-    });
-    $dropZone.on('click', () => $fileInput.trigger('click'));
-    $fileInput.on('change', (e) => {
-        if (e.target.files.length) {
-            addFilesToQueue(e.target.files);
-            $fileInput.val('');
+                // 1. 执行发送动作
+                await uploadAndSend(item);
+
+                // 2. 发送后轮询按钮状态，判断何时生成完成
+                const waitForGenerationToComplete = (timeoutMs = 120000) => {
+                    return new Promise((resolve) => {
+                        const start = Date.now();
+                        const iv = setInterval(() => {
+                            const $btn = $('#send_but');
+                            if ($btn.length && $btn.is(':visible') && $btn.css('display') !== 'none') {
+                                const isGenerating = $btn.find('.fa-stop, .fa-square').length > 0 || $btn.attr('title') === 'Stop generation';
+                                const isReady = $btn.find('.fa-paper-plane').length > 0 && !$btn.prop('disabled');
+                                if (!isGenerating && isReady) {
+                                    clearInterval(iv);
+                                    resolve(true);
+                                    return;
+                                }
+                            }
+                            if (Date.now() - start > timeoutMs) {
+                                clearInterval(iv);
+                                console.warn('[Chat Queue] generation wait timeout, proceeding');
+                                resolve(false);
+                            }
+                        }, 500);
+                    });
+                };
+
+                await waitForGenerationToComplete(120000);
+
+                // 标记完成并继续下一个
+                if (queue[currentIndex]) queue[currentIndex].status = 'done';
+                currentIndex++;
+                renderQueueList();
+
+                // 延迟一点再处理下一条
+                setTimeout(() => { if (isRunning) void processNext(); }, 500);
+
+            } catch (err) {
+                console.error('[Chat Queue] Error:', err);
+                item.status = 'error';
+                item.error = String(err);
+                toastr.error(`项目 ${currentIndex + 1} 发送失败`);
+                // 出错后休息一下继续
+                setTimeout(() => {
+                    if (isRunning) void processNext();
+                }, 2000);
+                renderQueueList();
+            }
         }
-    });
-}
-
-function bindControls($root) {
-    const $start = $root.find('#attachment_queue_start');
-    const $pause = $root.find('#attachment_queue_pause');
-    const $clear = $root.find('#attachment_queue_clear');
-
-    $start.on('click', () => {
-        if (!queue.length) return toastr.info('队列为空');
-
-        const nextIndex = queue.findIndex(q => q.status === 'pending');
-        if (nextIndex === -1) {
-            toastr.info('没有待发送的文件');
-            return;
-        }
-
-        currentIndex = nextIndex;
-        isRunning = true;
-        updateStatusText();
-        void processNext();
-    });
-
-    $pause.on('click', () => {
-        isRunning = false;
-        updateStatusText();
-        updateSmartControlsVisibility();
-    });
-
-    $clear.on('click', () => {
-        queue = [];
-        currentIndex = 0;
-        isRunning = false;
-        renderQueueList();
-    });
-}
-
-async function initAttachmentQueueRightMenu() {
-    if (!$(`#${RIGHT_MENU_ID}`).length) {
-        const $scrollInner = $('#right-nav-panel .scrollableInner');
-        if (!$scrollInner.length) return;
-
-        const blockHtml = `
-            <div id="${RIGHT_MENU_ID}" class="right_menu" style="display: none;">
-                <div class="right-nav-header flex-container flexGap5">
-                    <span class="attachment-queue-panel-title flex1">聊天队列</span>
-                </div>
-                <div class="right-nav-content">
-                    <div id="attachment_queue_dropzone" class="attachment-queue-dropzone">
-                        拖拽文件到这里，或点击添加
-                    </div>
-                    <div class="attachment-queue-main flex-container flexGap8">
                         <div id="attachment_queue_list" class="attachment-queue-list flex1"></div>
                         <div id="attachment_queue_preview" class="attachment-queue-preview flex1"></div>
                     </div>
