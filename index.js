@@ -591,19 +591,8 @@ async function initAttachmentQueueRightMenu() {
             $btnContainer.append(btnHtml);
 
             $('#attachment_queue_tab_button').on('click', async () => {
-                const $drawer = $('#right-nav-panel');
-                const isOpen = $drawer.hasClass('openDrawer');
-
-                // 如果抽屉未打开，先打开它
-                if (!isOpen) {
-                    const rightNavToggle = document.getElementById('unimportantYes');
-                    if (rightNavToggle) {
-                        await doNavbarIconClick.call(rightNavToggle);
-                    }
-                }
-
                 await initAttachmentQueueRightMenu();
-                selectRightMenuWithAnimation(RIGHT_MENU_ID);
+                toggleRightDrawer(RIGHT_MENU_ID);
             });
         }
     }
@@ -629,29 +618,8 @@ async function initAttachmentQueueRightMenu() {
         }
 
         $('#attachment_queue_icon .drawer-toggle').on('click', async function () {
-            const $drawer = $('#right-nav-panel');
-            const isOpen = $drawer.hasClass('openDrawer');
-            const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
-
-            // 如果面板已打开且当前显示的是队列，点击关闭面板（toggle行为）
-            if (isOpen && isQueueVisible) {
-                const rightNavToggle = document.getElementById('unimportantYes');
-                if (rightNavToggle) {
-                    await doNavbarIconClick.call(rightNavToggle);
-                }
-                return;
-            }
-
-            // 否则：打开面板（如果未打开）并切换到队列tab
-            if (!isOpen) {
-                const rightNavToggle = document.getElementById('unimportantYes');
-                if (rightNavToggle) {
-                    await doNavbarIconClick.call(rightNavToggle);
-                }
-            }
-
             await initAttachmentQueueRightMenu();
-            selectRightMenuWithAnimation(RIGHT_MENU_ID);
+            toggleRightDrawer(RIGHT_MENU_ID);
         });
     }
 }
@@ -806,19 +774,18 @@ jQuery(() => {
             $rightNavToggle.off('click.stAttachmentQueue');
             $rightNavToggle.off('click').on('click', async function () {
                 const $drawer = $('#right-nav-panel');
-                const isOpen = $drawer.hasClass('openDrawer');
                 const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
 
-                if (isOpen && isQueueVisible) {
-                    selectRightMenuWithAnimation('rm_characters_block');
-                    return;
-                }
-
-                await doNavbarIconClick.call(this);
-
-                const nowOpen = $drawer.hasClass('openDrawer');
-                if (nowOpen) {
-                    selectRightMenuWithAnimation('rm_characters_block');
+                if (isQueueVisible) {
+                    // 显示角色列表
+                    $('.right_menu').hide();
+                    $('#rm_characters_block').show();
+                    $(window).trigger('resize');
+                } else {
+                    // 切换抽屉
+                    $drawer.toggleClass('openDrawer closedDrawer');
+                    $drawer.css('transform', '');
+                    $(window).trigger('resize');
                 }
             });
         }
@@ -929,6 +896,26 @@ function reorderQueueById(sourceId, targetId) {
         currentIndex += 1;
     }
 }
+
+// 模拟 ST 原生的侧边栏切换
+const toggleRightDrawer = (targetId) => {
+    const $drawer = $('#right-nav-panel');
+    const $content = $(`#${targetId}`);
+
+    // 如果目标已经是当前显示的，且抽屉是打开的 -> 关闭抽屉
+    if ($content.is(':visible') && $drawer.hasClass('openDrawer')) {
+        $drawer.removeClass('openDrawer').addClass('closedDrawer');
+        $drawer.css('transform', ''); // 清理可能的样式
+        return;
+    }
+
+    // 否则 -> 隐藏其他面板，显示目标面板，打开抽屉
+    $('.right_menu').hide();
+    $content.show();
+    $drawer.removeClass('closedDrawer').addClass('openDrawer');
+    // 触发 resize 事件以重绘 UI
+    $(window).trigger('resize');
+};
 
 // 内联工具函数：替代原先对 utils.js 的依赖
 const getBase64Async = (file) => {
