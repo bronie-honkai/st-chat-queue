@@ -288,7 +288,58 @@ async function uploadAndSend(item) {
     console.log('[Chat Queue] Calling Generate()...');
     try {
         await Generate('normal', { automatic_trigger: false });
-        console.log('[Chat Queue] Generate() completed successfully');
+        console.log('[Chat Queue] Generate() returned — attempting to trigger actual send');
+
+        // 有些 SillyTavern 配置下 Generate 仅会准备消息但不提交，确保点击发送按钮以真正发送
+        const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
+        if (sendBtn) {
+            try {
+                // trigger click (use dispatchEvent to better mimic user)
+                sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                console.log('[Chat Queue] send button clicked');
+            } catch (e) {
+                try { $(sendBtn).trigger('click'); } catch (ee) { /* ignore */ }
+            }
+        } else {
+            // 兼容：尝试使用 jQuery 选择器触发发送
+            try { $('#send_but').trigger('click'); } catch (e) { /* ignore */ }
+        }
+
+        // 等待 generation_ended 事件触发（由 eventSource 驱动）。作为保险，设置超时回退
+        await new Promise((resolve, reject) => {
+            let settled = false;
+            const onEnded = () => {
+                if (settled) return;
+                settled = true;
+                resolve(true);
+            };
+
+            // 如果 eventSource 可用，监听一次 generation ended
+            try {
+                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                    const cb = () => { onEnded(); }
+                    eventSource.on(event_types.GENERATION_ENDED, cb);
+                    // 清理包装：在 settled 后移除监听
+                    const cleanupInterval = setInterval(() => {
+                        if (settled) {
+                            try { eventSource.off && eventSource.off(event_types.GENERATION_ENDED, cb); } catch (e) {}
+                            clearInterval(cleanupInterval);
+                        }
+                    }, 200);
+                }
+            } catch (e) {
+                // ignore
+            }
+
+            // 超时回退：30 秒仍未收到 generation_ended，则继续（避免无限阻塞）
+            setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                console.warn('[Chat Queue] generation_ended not received within timeout, continuing');
+                resolve(false);
+            }, 30000);
+        });
+        console.log('[Chat Queue] uploadAndSend finished (generation wait resolved)');
     } catch (error) {
         console.error('[Chat Queue] Generate() failed:', error);
         throw error;
