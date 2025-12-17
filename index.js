@@ -247,12 +247,12 @@ function addTextOnlyToQueue(text = '') {
 
 /**
  * 核心：上传并发送单个队列项（支持文本和附件）
- * 新策略：直接调用 Generate() 函数，让 ST 完整处理文件上传和消息发送
+ * 策略：纯 UI 模拟操作，通过点击发送按钮实现自动发送
  */
 async function uploadAndSend(item) {
     console.log('[Chat Queue] Processing item:', item.id, 'text:', item.text.slice(0, 30), 'file:', item.file?.name);
 
-    // 如果有文件，先上传文件
+    // 1. 处理文件
     if (item.file) {
         const fileInput = document.getElementById('file_form_input');
         if (!(fileInput instanceof HTMLInputElement)) {
@@ -264,163 +264,102 @@ async function uploadAndSend(item) {
         dt.items.add(item.file);
         fileInput.files = dt.files;
 
-        // 触发 change 事件，ST 会显示文件名
+        // 触发 change 事件，ST 会解析附件
         $('#file_form_input').trigger('change');
 
-        // 等待 UI 更新（增加延迟以确保充分处理）
-        await new Promise(r => setTimeout(r, 300));
+        // 等待附件挂载和 UI 更新
+        await new Promise(r => setTimeout(r, 500));
         console.log('[Chat Queue] File added to input');
     }
 
-    // 如果有文本内容，设置到发送框
-    if (item.text) {
-        const $textarea = $('#send_textarea');
-        if ($textarea.length) {
-            $textarea.val(item.text);
-            $textarea.trigger('input');
-            $textarea.trigger('change');
-            // 等待更长时间以确保文本完全处理
-            await new Promise(r => setTimeout(r, 300));
-            console.log('[Chat Queue] Text content set to textarea');
+    // 2. 处理文本
+    const $textarea = $('#send_textarea');
+    if ($textarea.length) {
+        $textarea.val(item.text || '');
+        $textarea.trigger('input');
+        $textarea.trigger('change');
+        // 等待按钮状态更新（从灰色变绿）
+        await new Promise(r => setTimeout(r, 300));
+        console.log('[Chat Queue] Text content set to textarea');
+    }
+
+    // 3. 点击发送按钮
+    console.log('[Chat Queue] Attempting to trigger send...');
+    const sendBtn = document.getElementById('send_but');
+
+    if (sendBtn) {
+        // 发送按钮存在，直接点击
+        console.log('[Chat Queue] Found send button, clicking...');
+        try {
+            sendBtn.click();
+            console.log('[Chat Queue] Send button clicked successfully');
+        } catch (e) {
+            console.warn('[Chat Queue] sendBtn.click() failed:', e.message);
+            // 如果 click() 失败，尝试 jQuery trigger
+            try {
+                $(sendBtn).trigger('click');
+                console.log('[Chat Queue] Send triggered via jQuery');
+            } catch (ee) {
+                throw new Error('Failed to trigger send button: ' + ee.message);
+            }
+        }
+    } else {
+        // 发送按钮找不到，作为备选手段尝试 Generate()
+        console.log('[Chat Queue] Send button not found, attempting fallback Generate() call');
+        if (typeof Generate === 'function') {
+            try {
+                await Generate('normal');
+                console.log('[Chat Queue] Fallback Generate() call completed');
+            } catch (e) {
+                throw new Error('Generate() fallback failed: ' + e.message);
+            }
+        } else {
+            throw new Error('Send button not found and Generate is not available');
         }
     }
 
-    // 等待一个额外的时间间隔，确保所有 UI 更新完成
-    await new Promise(r => setTimeout(r, 200));
-    console.log('[Chat Queue] UI fully updated, now triggering send...');
-    try {
-        // 确保我们能获得 Generate 函数（有时在模块作用域中未导出为全局）
-        let genFn = null;
+    // 4. 等待 generation_ended 事件
+    console.log('[Chat Queue] Waiting for AI generation to complete...');
+    await new Promise((resolve) => {
+        let settled = false;
 
-        // 尝试多种方式获取 Generate 函数
-        if (typeof Generate !== 'undefined') {
-            genFn = Generate;
-            console.log('[Chat Queue] Found Generate in global scope');
-        } else if (window && window.Generate) {
-            genFn = window.Generate;
-            console.log('[Chat Queue] Found Generate on window object');
-        } else {
-            try {
-                const mod = await import('../../../script.js');
-                if (mod && mod.Generate) {
-                    genFn = mod.Generate;
-                    console.log('[Chat Queue] Found Generate via dynamic import');
-                }
-            } catch (e) {
-                console.warn('[Chat Queue] Dynamic import failed:', e.message);
-            }
-        }
+        const onEnded = () => {
+            if (settled) return;
+            settled = true;
+            console.log('[Chat Queue] Generation ended event received');
+            resolve();
+        };
 
-        if (!genFn) {
-            // 短轮询等待 Generate 变为可用（最多 5 秒）
-            console.log('[Chat Queue] Polling for Generate function...');
-            await new Promise((resolve) => {
-                let pollCount = 0;
-                const iv = setInterval(() => {
-                    pollCount++;
-                    if (typeof Generate !== 'undefined') {
-                        genFn = Generate;
-                        console.log('[Chat Queue] Found Generate after ' + pollCount + ' polls');
-                        clearInterval(iv);
-                        resolve();
-                    } else if (window && window.Generate) {
-                        genFn = window.Generate;
-                        console.log('[Chat Queue] Found window.Generate after ' + pollCount + ' polls');
-                        clearInterval(iv);
-                        resolve();
+        // 监听 generation_ended 事件（如果 eventSource 可用）
+        try {
+            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
+                const cb = () => { onEnded(); };
+                eventSource.on(event_types.GENERATION_ENDED, cb);
+
+                // 清理监听器
+                const cleanupInterval = setInterval(() => {
+                    if (settled) {
+                        try {
+                            if (eventSource.off) eventSource.off(event_types.GENERATION_ENDED, cb);
+                        } catch (e) {}
+                        clearInterval(cleanupInterval);
                     }
                 }, 200);
-                setTimeout(() => {
-                    clearInterval(iv);
-                    console.log('[Chat Queue] Polling timeout after ' + pollCount + ' attempts');
-                    resolve();
-                }, 5000);
-            });
-        }
-
-        if (!genFn) {
-            const errorMsg = 'Generate is not available after all attempts';
-            console.error('[Chat Queue] ' + errorMsg);
-            throw new Error(errorMsg);
-        }
-
-        // Ensure genFn is actually a function before calling
-        if (typeof genFn !== 'function') {
-            const errorMsg = 'Generate is not a function, type is: ' + typeof genFn;
-            console.error('[Chat Queue] ' + errorMsg);
-            throw new Error(errorMsg);
-        }
-
-        console.log('[Chat Queue] Calling Generate with automatic trigger enabled...');
-        // 不使用 automatic_trigger: false，让 Generate 自动处理发送
-        await genFn('normal');
-        console.log('[Chat Queue] Generate() completed and message should be sent');
-
-        // 备用方案：如果 Generate 没有自动发送，主动点击发送按钮
-        // 等待 100ms 确保 UI 完全更新
-        await new Promise(r => setTimeout(r, 100));
-
-        const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
-        if (sendBtn) {
-            const isDisabled = sendBtn.disabled || sendBtn.classList.contains('disabled');
-            if (!isDisabled) {
-                console.log('[Chat Queue] Attempting to click send button as backup');
-                try {
-                    // 使用 dispatchEvent 以最大化兼容性
-                    sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-                    console.log('[Chat Queue] Send button clicked via dispatchEvent');
-                } catch (e) {
-                    console.warn('[Chat Queue] dispatchEvent failed, trying jQuery:', e);
-                    try { $(sendBtn).trigger('click'); } catch (ee) {
-                        console.warn('[Chat Queue] jQuery trigger also failed:', ee);
-                    }
-                }
-            } else {
-                console.log('[Chat Queue] Send button is disabled, skipping click');
             }
-        } else {
-            console.log('[Chat Queue] Send button not found');
+        } catch (e) {
+            console.warn('[Chat Queue] Failed to register generation_ended listener:', e.message);
         }
 
-        // 等待 generation_ended 事件触发（由 eventSource 驱动）。作为保险，设置超时回退
-        await new Promise((resolve, reject) => {
-            let settled = false;
-            const onEnded = () => {
-                if (settled) return;
-                settled = true;
-                resolve(true);
-            };
+        // 超时回退：30 秒后如果未收到事件，继续
+        setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.warn('[Chat Queue] generation_ended timeout (30s), continuing...');
+            resolve();
+        }, 30000);
+    });
 
-            // 如果 eventSource 可用，监听一次 generation ended
-            try {
-                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                    const cb = () => { onEnded(); }
-                    eventSource.on(event_types.GENERATION_ENDED, cb);
-                    // 清理包装：在 settled 后移除监听
-                    const cleanupInterval = setInterval(() => {
-                        if (settled) {
-                            try { eventSource.off && eventSource.off(event_types.GENERATION_ENDED, cb); } catch (e) {}
-                            clearInterval(cleanupInterval);
-                        }
-                    }, 200);
-                }
-            } catch (e) {
-                // ignore
-            }
-
-            // 超时回退：30 秒仍未收到 generation_ended，则继续（避免无限阻塞）
-            setTimeout(() => {
-                if (settled) return;
-                settled = true;
-                console.warn('[Chat Queue] generation_ended not received within timeout, continuing');
-                resolve(false);
-            }, 30000);
-        });
-        console.log('[Chat Queue] uploadAndSend finished (generation wait resolved)');
-    } catch (error) {
-        console.error('[Chat Queue] Generate() failed:', error);
-        throw error;
-    }
+    console.log('[Chat Queue] uploadAndSend completed');
 }
 
 /**
