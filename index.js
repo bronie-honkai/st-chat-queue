@@ -289,97 +289,74 @@ async function uploadAndSend(item) {
     await new Promise(r => setTimeout(r, 200));
     console.log('[Chat Queue] UI fully updated, now triggering send...');
     try {
-        // 确保我们能获得 Generate 函数（有时在模块作用域中未导出为全局）
-        let genFn = null;
-
-        // 尝试多种方式获取 Generate 函数
-        if (typeof Generate !== 'undefined') {
-            genFn = Generate;
-            console.log('[Chat Queue] Found Generate in global scope');
-        } else if (window && window.Generate) {
-            genFn = window.Generate;
-            console.log('[Chat Queue] Found Generate on window object');
-        } else {
-            try {
-                const mod = await import('../../../script.js');
-                if (mod && mod.Generate) {
-                    genFn = mod.Generate;
-                    console.log('[Chat Queue] Found Generate via dynamic import');
-                }
-            } catch (e) {
-                console.warn('[Chat Queue] Dynamic import failed:', e.message);
+        // 策略：直接点击发送按钮，不依赖 Generate 函数
+        // 这样更稳定，因为 Generate 可能在不同的加载时序中不可用
+        
+        console.log('[Chat Queue] Looking for send button...');
+        const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
+        
+        if (!sendBtn) {
+            // 如果没找到发送按钮，尝试通过 jQuery 找到
+            const $sendBtn = $('#send_but').length > 0 ? $('#send_but')[0] : null;
+            if (!$sendBtn) {
+                throw new Error('Send button not found in DOM');
             }
         }
 
-        if (!genFn) {
-            // 短轮询等待 Generate 变为可用（最多 5 秒）
-            console.log('[Chat Queue] Polling for Generate function...');
+        const btn = sendBtn || document.getElementById('send_but') || document.getElementById('send_button');
+        
+        if (!btn) {
+            throw new Error('Send button not found');
+        }
+
+        const isDisabled = btn.disabled || btn.classList.contains('disabled');
+        if (isDisabled) {
+            console.log('[Chat Queue] Send button is disabled, waiting for it to become enabled...');
+            // 等待发送按钮启用（最多 3 秒）
             await new Promise((resolve) => {
-                let pollCount = 0;
+                let checkCount = 0;
                 const iv = setInterval(() => {
-                    pollCount++;
-                    if (typeof Generate !== 'undefined') {
-                        genFn = Generate;
-                        console.log('[Chat Queue] Found Generate after ' + pollCount + ' polls');
+                    checkCount++;
+                    const enabled = !btn.disabled && !btn.classList.contains('disabled');
+                    if (enabled) {
                         clearInterval(iv);
-                        resolve();
-                    } else if (window && window.Generate) {
-                        genFn = window.Generate;
-                        console.log('[Chat Queue] Found window.Generate after ' + pollCount + ' polls');
-                        clearInterval(iv);
+                        console.log('[Chat Queue] Send button became enabled after ' + checkCount + ' checks');
                         resolve();
                     }
-                }, 200);
+                }, 100);
                 setTimeout(() => {
                     clearInterval(iv);
-                    console.log('[Chat Queue] Polling timeout after ' + pollCount + ' attempts');
+                    console.log('[Chat Queue] Send button wait timeout, proceeding anyway');
                     resolve();
-                }, 5000);
+                }, 3000);
             });
         }
 
-        if (!genFn) {
-            const errorMsg = 'Generate is not available after all attempts';
-            console.error('[Chat Queue] ' + errorMsg);
-            throw new Error(errorMsg);
-        }
-
-        // Ensure genFn is actually a function before calling
-        if (typeof genFn !== 'function') {
-            const errorMsg = 'Generate is not a function, type is: ' + typeof genFn;
-            console.error('[Chat Queue] ' + errorMsg);
-            throw new Error(errorMsg);
-        }
-
-        console.log('[Chat Queue] Calling Generate with automatic trigger enabled...');
-        // 不使用 automatic_trigger: false，让 Generate 自动处理发送
-        await genFn('normal');
-        console.log('[Chat Queue] Generate() completed and message should be sent');
-
-        // 备用方案：如果 Generate 没有自动发送，主动点击发送按钮
-        // 等待 100ms 确保 UI 完全更新
-        await new Promise(r => setTimeout(r, 100));
-
-        const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
-        if (sendBtn) {
-            const isDisabled = sendBtn.disabled || sendBtn.classList.contains('disabled');
-            if (!isDisabled) {
-                console.log('[Chat Queue] Attempting to click send button as backup');
-                try {
-                    // 使用 dispatchEvent 以最大化兼容性
-                    sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-                    console.log('[Chat Queue] Send button clicked via dispatchEvent');
-                } catch (e) {
-                    console.warn('[Chat Queue] dispatchEvent failed, trying jQuery:', e);
-                    try { $(sendBtn).trigger('click'); } catch (ee) {
-                        console.warn('[Chat Queue] jQuery trigger also failed:', ee);
-                    }
+        // 点击发送按钮
+        console.log('[Chat Queue] Clicking send button...');
+        try {
+            // 使用 dispatchEvent 以最大化兼容性
+            const clickEvent = new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window
+            });
+            btn.dispatchEvent(clickEvent);
+            console.log('[Chat Queue] Send button clicked via dispatchEvent');
+        } catch (e) {
+            console.warn('[Chat Queue] dispatchEvent failed, trying jQuery click:', e.message);
+            try { 
+                $(btn).trigger('click');
+                console.log('[Chat Queue] Send button clicked via jQuery');
+            } catch (ee) { 
+                console.error('[Chat Queue] jQuery click also failed:', ee.message);
+                // 最后的手段：直接调用 onclick 处理器
+                if (btn.onclick) {
+                    btn.onclick.call(btn);
+                    console.log('[Chat Queue] Send button clicked via onclick handler');
                 }
-            } else {
-                console.log('[Chat Queue] Send button is disabled, skipping click');
             }
-        } else {
-            console.log('[Chat Queue] Send button not found');
         }
 
         // 等待 generation_ended 事件触发（由 eventSource 驱动）。作为保险，设置超时回退
@@ -418,7 +395,7 @@ async function uploadAndSend(item) {
         });
         console.log('[Chat Queue] uploadAndSend finished (generation wait resolved)');
     } catch (error) {
-        console.error('[Chat Queue] Generate() failed:', error);
+        console.error('[Chat Queue] Send failed:', error);
         throw error;
     }
 }
