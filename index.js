@@ -544,28 +544,42 @@ async function initAttachmentQueueRightMenu() {
             cancelEditTextItem();
         });
 
-        // 注册 AI 回复结束事件，驱动队列继续
-        eventSource.on(event_types.GENERATION_ENDED, () => {
-            if (!isRunning) return;
+        // 注册 AI 回复结束事件，驱动队列继续（带保护与延迟注册）
+        const registerGenerationEnded = () => {
+            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
+                eventSource.on(event_types.GENERATION_ENDED, () => {
+                    if (!isRunning) return;
 
-            if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
-                queue[currentIndex].status = 'done';
-                currentIndex++;
-                renderQueueList();
+                    if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
+                        queue[currentIndex].status = 'done';
+                        currentIndex++;
+                        renderQueueList();
 
-                // 检查队列是否全部完成
-                if (currentIndex >= queue.length) {
-                    // 队列全部完成，停止运行并更新按钮状态
-                    isRunning = false;
-                    updateSmartControlsVisibility();
-                    return;
-                }
+                        // 检查队列是否全部完成
+                        if (currentIndex >= queue.length) {
+                            // 队列全部完成，停止运行并更新按钮状态
+                            isRunning = false;
+                            updateSmartControlsVisibility();
+                            return;
+                        }
 
-                setTimeout(() => {
-                    if (isRunning) void processNext();
-                }, 1000);
+                        setTimeout(() => {
+                            if (isRunning) void processNext();
+                        }, 1000);
+                    }
+                });
+                return true;
             }
-        });
+            return false;
+        };
+
+        if (!registerGenerationEnded()) {
+            const waiter = setInterval(() => {
+                if (registerGenerationEnded()) {
+                    clearInterval(waiter);
+                }
+            }, 500);
+        }
     }
 
     // 在角色管理按钮行中增加一个“附件队列”按钮
@@ -755,8 +769,34 @@ jQuery(() => {
         window.st_chat_queue_loaded = true;
         console.log('🔥 Chat Queue: 插件正在启动...');
 
-        // 执行初始化
-        await initAttachmentQueueRightMenu();
+        // 执行初始化（如果 eventSource 或 event_types 未就绪，延迟 initAttachmentQueueRightMenu）
+        const startRightMenu = async () => {
+            try {
+                await initAttachmentQueueRightMenu();
+            } catch (err) {
+                console.warn('[Chat Queue] initAttachmentQueueRightMenu failed, will retry when eventSource is ready.', err);
+
+                // 如果是因为 eventSource/event_types 未定义，启动轮询等待
+                if (typeof eventSource === 'undefined' || typeof event_types === 'undefined') {
+                    const waiter = setInterval(() => {
+                        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                            clearInterval(waiter);
+                            try {
+                                initAttachmentQueueRightMenu();
+                            } catch (e) {
+                                console.error('[Chat Queue] delayed initAttachmentQueueRightMenu error:', e);
+                            }
+                        }
+                    }, 500);
+                    return;
+                }
+
+                // 其它错误继续抛出到控制台
+                console.error(err);
+            }
+        };
+
+        await startRightMenu();
         initAttachmentQueueSmartControls();
         initAttachmentQueueWandButton();
 
