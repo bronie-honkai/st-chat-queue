@@ -747,44 +747,49 @@ function initAttachmentQueueWandButton() {
 }
 
 jQuery(() => {
-    if (typeof eventSource === 'undefined' || !event_types) {
-        console.error('[Attachment Queue] eventSource not available');
-        return;
-    }
-
-    eventSource.on(event_types.APP_READY, () => {
-        void initAttachmentQueueRightMenu();
-        initAttachmentQueueSmartControls();
-        initAttachmentQueueWandButton();
-
-        // 重写角色管理抽屉图标行为：
-        // - 正常情况下保持 ST 原生的开关逻辑
-        // - 当右侧已打开且当前显示的是队列时，点击只切回角色列表，而不收起抽屉
-        const $rightNavToggle = $('#unimportantYes'); // drawer-toggle 容器
-        if ($rightNavToggle.length) {
-            $rightNavToggle.off('click.stAttachmentQueue');
-
-            $rightNavToggle.off('click').on('click', async function () {
-                const $drawer = $('#right-nav-panel');
-                const isOpen = $drawer.hasClass('openDrawer');
-                const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
-
-                if (isOpen && isQueueVisible) {
-                    // 抽屉已打开且正在看队列：只切换到角色列表，不关闭抽屉
-                    selectRightMenuWithAnimation('rm_characters_block');
-                    return;
-                }
-
-                // 其它情况：沿用原生的开关逻辑
-                await doNavbarIconClick.call(this);
-
-                const nowOpen = $drawer.hasClass('openDrawer');
-                if (nowOpen) {
-                    selectRightMenuWithAnimation('rm_characters_block');
-                }
-            });
+    const tryInit = () => {
+        if (typeof eventSource === 'undefined' || !event_types) {
+            // 全局还没准备好，稍后重试
+            setTimeout(tryInit, 500);
+            return;
         }
-    });
+
+        eventSource.on(event_types.APP_READY, () => {
+            void initAttachmentQueueRightMenu();
+            initAttachmentQueueSmartControls();
+            initAttachmentQueueWandButton();
+
+            // 重写角色管理抽屉图标行为：
+            // - 正常情况下保持 ST 原生的开关逻辑
+            // - 当右侧已打开且当前显示的是队列时，点击只切回角色列表，而不收起抽屉
+            const $rightNavToggle = $('#unimportantYes'); // drawer-toggle 容器
+            if ($rightNavToggle.length) {
+                $rightNavToggle.off('click.stAttachmentQueue');
+
+                $rightNavToggle.off('click').on('click', async function () {
+                    const $drawer = $('#right-nav-panel');
+                    const isOpen = $drawer.hasClass('openDrawer');
+                    const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
+
+                    if (isOpen && isQueueVisible) {
+                        // 抽屉已打开且正在看队列：只切换到角色列表，不关闭抽屉
+                        selectRightMenuWithAnimation('rm_characters_block');
+                        return;
+                    }
+
+                    // 其它情况：沿用原生的开关逻辑
+                    await doNavbarIconClick.call(this);
+
+                    const nowOpen = $drawer.hasClass('openDrawer');
+                    if (nowOpen) {
+                        selectRightMenuWithAnimation('rm_characters_block');
+                    }
+                });
+            }
+        });
+    };
+
+    tryInit();
 });
 
 /**
