@@ -1,4 +1,4 @@
-/* global jQuery, $, eventSource, event_types, toastr */
+/* global jQuery, $, eventSource, event_types, toastr, Generate */
 
 /** @typedef {{ id: string; text: string; file: File | null; status: 'pending' | 'sending' | 'done' | 'error'; error?: string }} QueueItem */
 
@@ -622,7 +622,7 @@ function initAttachmentQueueWandButton() {
     const html = `
         <div id="attachment_queue_wand_button" class="list-group-item flex-container flexGap5">
             <div class="fa-fw fa-solid fa-layer-group extensionsMenuExtensionButton"></div>
-            <span>附件文件队列</span>
+            <span>附加文件队列</span>
         </div>`;
 
     const $attachButton = $container.find('#attachFile');
@@ -657,6 +657,79 @@ const toggleRightDrawer = (targetId) => {
     $drawer.removeClass('closedDrawer').addClass('openDrawer');
     $(window).trigger('resize');
 };
+
+/**
+ * 绑定拖拽排序事件 (补回漏掉的函数)
+ */
+function bindDragAndDropEvents($row, id) {
+    $row.on('dragstart', (e) => {
+        dragSourceId = id;
+        $row.addClass('attachment-queue-item-dragging');
+
+        const dt = e.originalEvent?.dataTransfer;
+        if (dt) {
+            dt.effectAllowed = 'move';
+            dt.setData('text/plain', id);
+        }
+    });
+
+    $row.on('dragover', (e) => {
+        e.preventDefault();
+        const dt = e.originalEvent?.dataTransfer;
+        if (dt) {
+            dt.dropEffect = 'move';
+        }
+        $row.addClass('attachment-queue-item-dragover');
+    });
+
+    $row.on('dragleave', () => {
+        $row.removeClass('attachment-queue-item-dragover');
+    });
+
+    $row.on('dragend', () => {
+        $row.removeClass('attachment-queue-item-dragging attachment-queue-item-dragover');
+        dragSourceId = null;
+    });
+
+    $row.on('drop', (e) => {
+        e.preventDefault();
+        $row.removeClass('attachment-queue-item-dragover');
+
+        const dt = e.originalEvent?.dataTransfer;
+        const sourceId = dt?.getData('text/plain') || dragSourceId;
+        const targetId = id;
+
+        if (!sourceId || !targetId || sourceId === targetId) {
+            return;
+        }
+
+        reorderQueueById(sourceId, targetId);
+        renderQueueList();
+    });
+}
+
+/**
+ * 根据拖拽结果重新排序队列 (补回漏掉的函数)
+ */
+function reorderQueueById(sourceId, targetId) {
+    const fromIndex = queue.findIndex(q => q.id === sourceId);
+    const toIndex = queue.findIndex(q => q.id === targetId);
+
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+        return;
+    }
+
+    const [moved] = queue.splice(fromIndex, 1);
+    queue.splice(toIndex, 0, moved);
+
+    if (currentIndex === fromIndex) {
+        currentIndex = toIndex;
+    } else if (fromIndex < currentIndex && toIndex >= currentIndex) {
+        currentIndex -= 1;
+    } else if (fromIndex > currentIndex && toIndex <= currentIndex) {
+        currentIndex += 1;
+    }
+}
 
 jQuery(() => {
     const entryPoint = async () => {
