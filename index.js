@@ -291,10 +291,10 @@ async function uploadAndSend(item) {
     try {
         // 策略：直接点击发送按钮，不依赖 Generate 函数
         // 这样更稳定，因为 Generate 可能在不同的加载时序中不可用
-        
+
         console.log('[Chat Queue] Looking for send button...');
         const sendBtn = document.getElementById('send_but') || document.getElementById('send_button');
-        
+
         if (!sendBtn) {
             // 如果没找到发送按钮，尝试通过 jQuery 找到
             const $sendBtn = $('#send_but').length > 0 ? $('#send_but')[0] : null;
@@ -304,7 +304,7 @@ async function uploadAndSend(item) {
         }
 
         const btn = sendBtn || document.getElementById('send_but') || document.getElementById('send_button');
-        
+
         if (!btn) {
             throw new Error('Send button not found');
         }
@@ -346,10 +346,10 @@ async function uploadAndSend(item) {
             console.log('[Chat Queue] Send button clicked via dispatchEvent');
         } catch (e) {
             console.warn('[Chat Queue] dispatchEvent failed, trying jQuery click:', e.message);
-            try { 
+            try {
                 $(btn).trigger('click');
                 console.log('[Chat Queue] Send button clicked via jQuery');
-            } catch (ee) { 
+            } catch (ee) {
                 console.error('[Chat Queue] jQuery click also failed:', ee.message);
                 // 最后的手段：直接调用 onclick 处理器
                 if (btn.onclick) {
@@ -359,39 +359,89 @@ async function uploadAndSend(item) {
             }
         }
 
-        // 等待 generation_ended 事件触发（由 eventSource 驱动）。作为保险，设置超时回退
+        // 等待 generation_ended 事件触发（由 eventSource 驱动）
+        // 使用多种方式确保能检测到 AI 完成：事件监听 + 轮询检测
+        console.log('[Chat Queue] Waiting for AI generation to complete...');
         await new Promise((resolve, reject) => {
             let settled = false;
+            let generationStarted = false;
+
             const onEnded = () => {
                 if (settled) return;
                 settled = true;
+                console.log('[Chat Queue] GENERATION_ENDED event received');
                 resolve(true);
             };
 
-            // 如果 eventSource 可用，监听一次 generation ended
+            // 记录发送时的消息数
+            const initialMessageCount = (window.chat || []).length || 0;
+            console.log('[Chat Queue] Initial message count:', initialMessageCount);
+
+            // 方法 1：监听 eventSource 事件
+            let eventSourceRegistered = false;
             try {
-                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
+                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && event_types.GENERATION_ENDED) {
+                    console.log('[Chat Queue] Registering GENERATION_ENDED event listener');
                     const cb = () => { onEnded(); }
-                    eventSource.on(event_types.GENERATION_ENDED, cb);
+                    eventSource.once(event_types.GENERATION_ENDED, cb);
+                    eventSourceRegistered = true;
                     // 清理包装：在 settled 后移除监听
                     const cleanupInterval = setInterval(() => {
                         if (settled) {
-                            try { eventSource.off && eventSource.off(event_types.GENERATION_ENDED, cb); } catch (e) {}
+                            try {
+                                eventSource.off && eventSource.off(event_types.GENERATION_ENDED, cb);
+                            } catch (e) {}
                             clearInterval(cleanupInterval);
                         }
                     }, 200);
                 }
             } catch (e) {
-                // ignore
+                console.warn('[Chat Queue] Failed to register eventSource listener:', e.message);
             }
 
-            // 超时回退：30 秒仍未收到 generation_ended，则继续（避免无限阻塞）
+            if (!eventSourceRegistered) {
+                console.warn('[Chat Queue] eventSource not available, will use polling fallback');
+            }
+
+            // 方法 2：轮询检测，看 chat 是否有新消息（备用方案）
+            let pollAttempts = 0;
+            const pollInterval = setInterval(() => {
+                if (settled) {
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                pollAttempts++;
+                const currentMessageCount = (window.chat || []).length || 0;
+
+                // 如果消息数增加，说明 AI 生成了回复
+                if (currentMessageCount > initialMessageCount) {
+                    console.log('[Chat Queue] Detected new message via polling. Initial:', initialMessageCount, 'Current:', currentMessageCount);
+
+                    // 额外等待 500ms 以确保消息完全生成
+                    setTimeout(() => {
+                        if (!settled) {
+                            settled = true;
+                            console.log('[Chat Queue] Resolving via polling detection');
+                            resolve(true);
+                        }
+                    }, 500);
+                    clearInterval(pollInterval);
+                }
+
+                if (pollAttempts % 10 === 0) {
+                    console.log('[Chat Queue] Polling... attempt', pollAttempts, 'message count:', currentMessageCount);
+                }
+            }, 200);
+
+            // 超时回退：60 秒仍未收到，则继续（避免无限阻塞）
             setTimeout(() => {
+                clearInterval(pollInterval);
                 if (settled) return;
                 settled = true;
-                console.warn('[Chat Queue] generation_ended not received within timeout, continuing');
+                console.warn('[Chat Queue] generation_ended timeout (60s), proceeding anyway. Poll attempts:', pollAttempts);
                 resolve(false);
-            }, 30000);
+            }, 60000);
         });
         console.log('[Chat Queue] uploadAndSend finished (generation wait resolved)');
     } catch (error) {
@@ -651,31 +701,57 @@ async function initAttachmentQueueRightMenu() {
 
         // 注册 AI 回复结束事件，驱动队列继续（带保护与延迟注册）
         const registerGenerationEnded = () => {
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
-                eventSource.on(event_types.GENERATION_ENDED, () => {
-                    if (!isRunning) return;
+            if (typeof eventSource === 'undefined' || typeof event_types === 'undefined' || !event_types.GENERATION_ENDED) {
+                console.log('[Chat Queue] eventSource not available for registration');
+                return false;
+            }
 
-                    if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
-                        queue[currentIndex].status = 'done';
-                        currentIndex++;
-                        renderQueueList();
+            console.log('[Chat Queue] Registering global GENERATION_ENDED handler');
 
-                        // 检查队列是否全部完成
-                        if (currentIndex >= queue.length) {
-                            // 队列全部完成，停止运行并更新按钮状态
-                            isRunning = false;
-                            updateSmartControlsVisibility();
-                            return;
-                        }
-
-                        setTimeout(() => {
-                            if (isRunning) void processNext();
-                        }, 1000);
-                    }
-                });
+            // 使用一个标志防止重复注册
+            if (window._stChatQueueGenerationEndedRegistered) {
+                console.log('[Chat Queue] GENERATION_ENDED handler already registered');
                 return true;
             }
-            return false;
+
+            window._stChatQueueGenerationEndedRegistered = true;
+
+            eventSource.on(event_types.GENERATION_ENDED, () => {
+                console.log('[Chat Queue] GENERATION_ENDED event fired. isRunning:', isRunning, 'currentIndex:', currentIndex);
+
+                if (!isRunning) {
+                    console.log('[Chat Queue] Queue not running, skipping');
+                    return;
+                }
+
+                if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
+                    console.log('[Chat Queue] Marking current item as done');
+                    queue[currentIndex].status = 'done';
+                    currentIndex++;
+                    renderQueueList();
+
+                    // 检查队列是否全部完成
+                    if (currentIndex >= queue.length) {
+                        console.log('[Chat Queue] All items completed');
+                        // 队列全部完成，停止运行并更新按钮状态
+                        isRunning = false;
+                        updateSmartControlsVisibility();
+                        return;
+                    }
+
+                    console.log('[Chat Queue] Processing next item...');
+                    // 延迟 1 秒后处理下一个
+                    setTimeout(() => {
+                        if (isRunning) {
+                            void processNext();
+                        }
+                    }, 1000);
+                } else {
+                    console.log('[Chat Queue] Current item not in sending status or queue empty');
+                }
+            });
+
+            return true;
         };
 
         if (!registerGenerationEnded()) {
