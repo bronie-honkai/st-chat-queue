@@ -748,8 +748,8 @@ function initAttachmentQueueWandButton() {
 
 jQuery(() => {
     const tryInit = () => {
-        if (typeof eventSource === 'undefined' || !event_types) {
-            // 全局还没准备好，稍后重试
+        if (typeof eventSource === 'undefined' || typeof event_types === 'undefined') {
+            // 全局还没准备好，稍后重试（使用 typeof 避免 ReferenceError）
             setTimeout(tryInit, 500);
             return;
         }
