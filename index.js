@@ -1,4 +1,4 @@
-/* global jQuery, $, eventSource, event_types, toastr, Generate */
+/* global jQuery, $, eventSource, event_types, toastr */
 
 /** @typedef {{ id: string; text: string; file: File | null; status: 'pending' | 'sending' | 'done' | 'error'; error?: string }} QueueItem */
 
@@ -154,17 +154,14 @@ let currentPreviewUrl = null;
 function showPreviewForItem(item) {
     const $preview = $('#attachment_queue_preview');
     if (!$preview.length) return;
-    // 先隐藏区域，清空内容，渲染后 slideDown 显示（默认折叠）
     $preview.hide();
     $preview.empty();
 
-    // 显示文本内容（如果有）
     if (item.text) {
         const $textPre = $('<pre class="attachment-queue-preview-text" />').text(item.text);
         $preview.append($textPre);
     }
 
-    // 显示附件预览（如果有）
     if (!item.file) {
         if (!item.text) {
             const $info = $('<div class="attachment-queue-preview-generic" />').text('(空项目)');
@@ -176,7 +173,6 @@ function showPreviewForItem(item) {
 
     const file = item.file;
 
-    // 清理旧的 object URL
     if (currentPreviewUrl) {
         URL.revokeObjectURL(currentPreviewUrl);
         currentPreviewUrl = null;
@@ -217,9 +213,6 @@ function translateStatus(status) {
     return map[status] || status;
 }
 
-/**
- * 将文件加入队列
- */
 function addFilesToQueue(files) {
     const items = Array.from(files || []);
     if (!items.length) return;
@@ -233,9 +226,6 @@ function addFilesToQueue(files) {
     updateSmartControlsVisibility();
 }
 
-/**
- * 向队列添加纯文本项（新增楼层）
- */
 function addTextOnlyToQueue(text = '') {
     const now = Date.now();
     const id = `${now}-text`;
@@ -246,134 +236,78 @@ function addTextOnlyToQueue(text = '') {
 }
 
 /**
- * 核心：上传并发送单个队列项（支持文本和附件）
- * 策略：纯 UI 模拟操作，通过点击发送按钮实现自动发送
+ * 核心发送逻辑：纯 UI 模拟 (Pure UI Simulation)
+ * 放弃所有内部 Generate 调用，直接操作 DOM 元素和事件。
  */
 async function uploadAndSend(item) {
-    console.log('[Chat Queue] Processing item:', item.id, 'text:', item.text.slice(0, 30), 'file:', item.file?.name);
+    console.log('[Chat Queue] UI Sim: Processing item:', item.id);
 
-    // 1. 处理文件
+    // 1. 处理附件
     if (item.file) {
         const fileInput = document.getElementById('file_form_input');
-        if (!(fileInput instanceof HTMLInputElement)) {
-            throw new Error('file_form_input not found');
+        if (fileInput) {
+            // 使用 DataTransfer 构造文件列表
+            const dt = new DataTransfer();
+            dt.items.add(item.file);
+            fileInput.files = dt.files;
+
+            // 触发 change 事件，让 SillyTavern 识别并挂载附件
+            $('#file_form_input').trigger('change');
+
+            // 给予足够的时间让 ST 处理文件 (解析、转码、UI显示)
+            // 500ms 通常足够，如果是大文件可能需要更久，这里给 800ms 保险
+            await new Promise(r => setTimeout(r, 800));
+            console.log('[Chat Queue] UI Sim: File input updated');
         }
-
-        // 用 DataTransfer 模拟用户选择文件
-        const dt = new DataTransfer();
-        dt.items.add(item.file);
-        fileInput.files = dt.files;
-
-        // 触发 change 事件，ST 会解析附件
-        $('#file_form_input').trigger('change');
-
-        // 等待附件挂载和 UI 更新
-        await new Promise(r => setTimeout(r, 500));
-        console.log('[Chat Queue] File added to input');
     }
 
     // 2. 处理文本
     const $textarea = $('#send_textarea');
     if ($textarea.length) {
+        // 先清空，再设置值，防止追加混乱
+        $textarea.val('').trigger('input');
         $textarea.val(item.text || '');
+
+        // 必须触发 input 和 change，ST 才会检测到内容并点亮发送按钮
         $textarea.trigger('input');
         $textarea.trigger('change');
-        // 等待按钮状态更新（从灰色变绿）
+
+        // 等待 UI 响应 (按钮从禁用变为可用)
         await new Promise(r => setTimeout(r, 300));
-        console.log('[Chat Queue] Text content set to textarea');
+        console.log('[Chat Queue] UI Sim: Textarea updated');
     }
 
     // 3. 点击发送按钮
-    console.log('[Chat Queue] Attempting to trigger send...');
-    const sendBtn = document.getElementById('send_but');
-
-    if (sendBtn) {
-        // 发送按钮存在，直接点击
-        console.log('[Chat Queue] Found send button, clicking...');
-        try {
-            sendBtn.click();
-            console.log('[Chat Queue] Send button clicked successfully');
-        } catch (e) {
-            console.warn('[Chat Queue] sendBtn.click() failed:', e.message);
-            // 如果 click() 失败，尝试 jQuery trigger
-            try {
-                $(sendBtn).trigger('click');
-                console.log('[Chat Queue] Send triggered via jQuery');
-            } catch (ee) {
-                throw new Error('Failed to trigger send button: ' + ee.message);
-            }
+    const $sendBtn = $('#send_but');
+    if ($sendBtn.length) {
+        // 检查按钮是否被禁用
+        if ($sendBtn.prop('disabled') || $sendBtn.hasClass('disabled')) {
+            console.warn('[Chat Queue] Send button is disabled! ST might not be ready.');
+            // 尝试强行移除禁用类 (死马当活马医)
+            $sendBtn.removeClass('disabled').prop('disabled', false);
         }
+
+        console.log('[Chat Queue] UI Sim: Clicking send button...');
+        // 优先使用原生 click，兼容性更好
+        $sendBtn[0].click();
+
+        // 双重保险：如果原生 click 没反应，触发 jQuery click
+        // setTimeout(() => $sendBtn.trigger('click'), 100);
     } else {
-        // 发送按钮找不到，作为备选手段尝试 Generate()
-        console.log('[Chat Queue] Send button not found, attempting fallback Generate() call');
-        if (typeof Generate === 'function') {
-            try {
-                await Generate('normal');
-                console.log('[Chat Queue] Fallback Generate() call completed');
-            } catch (e) {
-                throw new Error('Generate() fallback failed: ' + e.message);
-            }
-        } else {
-            throw new Error('Send button not found and Generate is not available');
-        }
+        throw new Error('Send button (#send_but) not found!');
     }
-
-    // 4. 等待 generation_ended 事件
-    console.log('[Chat Queue] Waiting for AI generation to complete...');
-    await new Promise((resolve) => {
-        let settled = false;
-
-        const onEnded = () => {
-            if (settled) return;
-            settled = true;
-            console.log('[Chat Queue] Generation ended event received');
-            resolve();
-        };
-
-        // 监听 generation_ended 事件（如果 eventSource 可用）
-        try {
-            if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
-                const cb = () => { onEnded(); };
-                eventSource.on(event_types.GENERATION_ENDED, cb);
-
-                // 清理监听器
-                const cleanupInterval = setInterval(() => {
-                    if (settled) {
-                        try {
-                            if (eventSource.off) eventSource.off(event_types.GENERATION_ENDED, cb);
-                        } catch (e) {}
-                        clearInterval(cleanupInterval);
-                    }
-                }, 200);
-            }
-        } catch (e) {
-            console.warn('[Chat Queue] Failed to register generation_ended listener:', e.message);
-        }
-
-        // 超时回退：30 秒后如果未收到事件，继续
-        setTimeout(() => {
-            if (settled) return;
-            settled = true;
-            console.warn('[Chat Queue] generation_ended timeout (30s), continuing...');
-            resolve();
-        }, 30000);
-    });
-
-    console.log('[Chat Queue] uploadAndSend completed');
 }
 
 /**
- * 循环处理器 - 支持发送文本和附件
+ * 循环处理器
  */
 async function processNext() {
-    // 每次循环前检查是否仍在运行
     if (!isRunning) return;
 
-    // 找到下一个待发送的文件（从第一个 pending 开始）
+    // 找到下一个待发送项
     const nextIndex = queue.findIndex(q => q.status === 'pending');
 
     if (nextIndex === -1) {
-        // 没有待发送的文件了
         isRunning = false;
         toastr.success('队列全部完成！');
         updateStatusText();
@@ -388,33 +322,28 @@ async function processNext() {
     renderQueueList();
 
     try {
-        // --- 执行发送逻辑 ---
+        // 1. 执行发送动作 (填空 + 点按钮)
         await uploadAndSend(item);
 
-        // --- 等待 AI 回复完成 ---
-        // 我们不在这里死等，而是利用 EventSource 监听
-        // 设置一个标志位，等待 generation_ended 事件来触发下一次 processNext
-        // 这里只是为了保险，如果 60秒 没反应则超时
-        // 真正的递归调用移交给 eventSource 监听器
+        // 2. 等待 AI 回复 (监听全局事件)
+        // 我们不在这里死等，而是把 "处理下一个" 的任务交给 eventSource 监听器
+        // 这样可以避免 processNext 递归调用栈过深，也符合事件驱动模型
+        console.log('[Chat Queue] Waiting for generation_ended event...');
 
     } catch (err) {
         console.error('[Chat Queue] Error:', err);
         item.status = 'error';
         item.error = String(err);
-        toastr.error(`项目 ${item.id} 发送失败`);
+        toastr.error(`项目 ${currentIndex + 1} 发送失败`);
 
-        // 如果出错，休息 1 秒继续下一个
-        currentIndex++;
+        // 出错后休息一下继续
         setTimeout(() => {
             if (isRunning) void processNext();
-        }, 1000);
+        }, 2000);
         renderQueueList();
     }
 }
 
-/**
- * 进入编辑模式编辑文本项
- */
 function editTextItem(itemId) {
     const item = queue.find(q => q.id === itemId);
     if (!item) return;
@@ -435,9 +364,6 @@ function editTextItem(itemId) {
     }
 }
 
-/**
- * 退出编辑模式
- */
 function cancelEditTextItem() {
     const $editor = $('#attachment_queue_editor');
     const $list = $('#attachment_queue_list');
@@ -458,7 +384,6 @@ function bindDropZoneEvents($root) {
     const $dropZone = $root.find('#attachment_queue_dropzone');
     const $fileInput = $root.find('#attachment_queue_file_input');
 
-    // ... 保持原有逻辑 ...
     $dropZone.on('dragenter dragover', (e) => {
         e.preventDefault(); e.stopPropagation();
         $dropZone.addClass('attachment-queue-dropzone-hover');
@@ -488,7 +413,6 @@ function bindControls($root) {
     $start.on('click', () => {
         if (!queue.length) return toastr.info('队列为空');
 
-        // 从第一个 pending 项重新开始/继续
         const nextIndex = queue.findIndex(q => q.status === 'pending');
         if (nextIndex === -1) {
             toastr.info('没有待发送的文件');
@@ -498,12 +422,13 @@ function bindControls($root) {
         currentIndex = nextIndex;
         isRunning = true;
         updateStatusText();
-        void processNext(); // 启动或继续
+        void processNext();
     });
 
     $pause.on('click', () => {
         isRunning = false;
         updateStatusText();
+        updateSmartControlsVisibility();
     });
 
     $clear.on('click', () => {
@@ -515,7 +440,6 @@ function bindControls($root) {
 }
 
 async function initAttachmentQueueRightMenu() {
-    // 创建右侧面板中的队列 Tab 内容
     if (!$(`#${RIGHT_MENU_ID}`).length) {
         const $scrollInner = $('#right-nav-panel .scrollableInner');
         if (!$scrollInner.length) return;
@@ -567,34 +491,20 @@ async function initAttachmentQueueRightMenu() {
         bindControls($block);
         updateStatusText();
 
-        // “添加文件”按钮触发文件选择
         $('#attachment_queue_add').on('click', () => {
-            const inputEl = /** @type {HTMLInputElement | null} */ (document.getElementById('attachment_queue_file_input'));
-            if (!inputEl) return;
-
-            try {
-                if (typeof inputEl.showPicker === 'function') {
-                    inputEl.showPicker();
-                } else {
-                    inputEl.click();
-                }
-            } catch {
-                inputEl.click();
-            }
+            const inputEl = document.getElementById('attachment_queue_file_input');
+            if (inputEl) inputEl.click();
         });
 
-        // "新增楼层"按钮：创建新文本项并进入编辑模式
         $('#attachment_queue_add_text').on('click', () => {
             const newId = addTextOnlyToQueue('');
             editTextItem(newId);
         });
 
-        // 保存文本
         $('#attachment_queue_save_text').on('click', () => {
             const $input = $('#attachment_queue_text_input');
             const text = $input.val() || '';
             const currentEditId = $input.attr('data-edit-id');
-
             if (currentEditId) {
                 const item = queue.find(q => q.id === currentEditId);
                 if (item) {
@@ -602,34 +512,32 @@ async function initAttachmentQueueRightMenu() {
                     renderQueueList();
                 }
             }
-
             cancelEditTextItem();
         });
 
-        // 取消编辑
         $('#attachment_queue_cancel_text').on('click', () => {
             cancelEditTextItem();
         });
 
-        // 注册 AI 回复结束事件，驱动队列继续（带保护与延迟注册）
+        // 注册监听器：当 AI 生成完毕后，继续下一条
         const registerGenerationEnded = () => {
             if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.GENERATION_ENDED !== 'undefined') {
                 eventSource.on(event_types.GENERATION_ENDED, () => {
                     if (!isRunning) return;
 
+                    // 标记当前项完成
                     if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
                         queue[currentIndex].status = 'done';
                         currentIndex++;
                         renderQueueList();
 
-                        // 检查队列是否全部完成
                         if (currentIndex >= queue.length) {
-                            // 队列全部完成，停止运行并更新按钮状态
                             isRunning = false;
                             updateSmartControlsVisibility();
                             return;
                         }
 
+                        // 延迟 1 秒后处理下一条
                         setTimeout(() => {
                             if (isRunning) void processNext();
                         }, 1000);
@@ -642,52 +550,9 @@ async function initAttachmentQueueRightMenu() {
 
         if (!registerGenerationEnded()) {
             const waiter = setInterval(() => {
-                if (registerGenerationEnded()) {
-                    clearInterval(waiter);
-                }
+                if (registerGenerationEnded()) clearInterval(waiter);
             }, 500);
         }
-    }
-
-    // 在角色管理按钮行中增加一个“附件队列”按钮
-    if (!$('#attachment_queue_tab_button').length) {
-        const $btnContainer = $('#rm_buttons_container');
-        if ($btnContainer.length) {
-            const btnHtml = `
-                <div id="attachment_queue_tab_button" class="menu_button fa-solid fa-layer-group" title="附件队列"></div>`;
-            $btnContainer.append(btnHtml);
-
-            $('#attachment_queue_tab_button').on('click', async () => {
-                await initAttachmentQueueRightMenu();
-                toggleRightDrawer(RIGHT_MENU_ID);
-            });
-        }
-    }
-
-    // 顶部图标：打开右侧面板并切换到队列 Tab
-    if (!$('#attachment_queue_icon').length) {
-        const iconHtml = `
-            <div id="attachment_queue_icon" class="drawer">
-                <div class="drawer-toggle">
-                    <div class="drawer-icon fa-solid fa-layer-group fa-fw" title="聊天队列" data-i18n="[title]Chat Queue"></div>
-                </div>
-            </div>`;
-
-        const $backgrounds = $('#backgrounds-button');
-        const $extensions = $('#extensions-settings-button');
-
-        if ($backgrounds.length) {
-            $(iconHtml).insertAfter($backgrounds);
-        } else if ($extensions.length) {
-            $(iconHtml).insertBefore($extensions);
-        } else {
-            $('#top-settings-holder').append(iconHtml);
-        }
-
-        $('#attachment_queue_icon .drawer-toggle').on('click', async function () {
-            await initAttachmentQueueRightMenu();
-            toggleRightDrawer(RIGHT_MENU_ID);
-        });
     }
 }
 
@@ -705,17 +570,13 @@ function initAttachmentQueueSmartControls() {
         $('#attachment_queue_play').on('click', () => {
             if (!queue.length) {
                 toastr.info('队列为空');
-                updateSmartControlsVisibility();
                 return;
             }
-
             const nextIndex = queue.findIndex(q => q.status === 'pending');
             if (nextIndex === -1) {
                 toastr.info('没有待发送的文件');
-                updateSmartControlsVisibility();
                 return;
             }
-
             currentIndex = nextIndex;
             isRunning = true;
             updateStatusText();
@@ -729,7 +590,6 @@ function initAttachmentQueueSmartControls() {
             updateSmartControlsVisibility();
         });
     }
-
     updateSmartControlsVisibility();
 }
 
@@ -757,14 +617,12 @@ function initAttachmentQueueWandButton() {
     const $container = $('#attach_file_wand_container');
     if (!$container.length) return;
 
-    if ($('#attachment_queue_wand_button').length) {
-        return;
-    }
+    if ($('#attachment_queue_wand_button').length) return;
 
     const html = `
         <div id="attachment_queue_wand_button" class="list-group-item flex-container flexGap5">
             <div class="fa-fw fa-solid fa-layer-group extensionsMenuExtensionButton"></div>
-            <span>附加文件队列</span>
+            <span>附件文件队列</span>
         </div>`;
 
     const $attachButton = $container.find('#attachFile');
@@ -775,217 +633,84 @@ function initAttachmentQueueWandButton() {
     }
 
     $('#attachment_queue_wand_button').on('click', async () => {
-        // 初始化右侧菜单
         await initAttachmentQueueRightMenu();
-        // 打开右侧面板并显示队列选项卡
         toggleRightDrawer(RIGHT_MENU_ID);
-
-        // 打开文件选择器
-        const inputEl = /** @type {HTMLInputElement | null} */ (document.getElementById('attachment_queue_file_input'));
-        if (!inputEl) return;
-
-        try {
-            if (typeof inputEl.showPicker === 'function') {
-                inputEl.showPicker();
-            } else {
-                inputEl.click();
-            }
-        } catch {
-            inputEl.click();
-        }
+        // 打开选择器
+        const inputEl = document.getElementById('attachment_queue_file_input');
+        if (inputEl) inputEl.click();
     });
 }
 
+// 侧边栏切换 Helper
+const toggleRightDrawer = (targetId) => {
+    const $drawer = $('#right-nav-panel');
+    const $content = $(`#${targetId}`);
+
+    if ($content.is(':visible') && $drawer.hasClass('openDrawer')) {
+        $drawer.removeClass('openDrawer').addClass('closedDrawer');
+        $drawer.css('transform', '');
+        return;
+    }
+
+    $('.right_menu').hide();
+    $content.show();
+    $drawer.removeClass('closedDrawer').addClass('openDrawer');
+    $(window).trigger('resize');
+};
+
 jQuery(() => {
-    /**
-     * entryPoint: 核心启动函数，带防重入保护
-     */
     const entryPoint = async () => {
         if (window.st_chat_queue_loaded) return;
         window.st_chat_queue_loaded = true;
         console.log('🔥 Chat Queue: 插件正在启动...');
 
-        // 执行初始化（如果 eventSource 或 event_types 未就绪，延迟 initAttachmentQueueRightMenu）
-        const startRightMenu = async () => {
-            try {
-                await initAttachmentQueueRightMenu();
-            } catch (err) {
-                console.warn('[Chat Queue] initAttachmentQueueRightMenu failed, will retry when eventSource is ready.', err);
-
-                // 如果是因为 eventSource/event_types 未定义，启动轮询等待
-                if (typeof eventSource === 'undefined' || typeof event_types === 'undefined') {
-                    const waiter = setInterval(() => {
-                        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
-                            clearInterval(waiter);
-                            try {
-                                initAttachmentQueueRightMenu();
-                            } catch (e) {
-                                console.error('[Chat Queue] delayed initAttachmentQueueRightMenu error:', e);
-                            }
-                        }
-                    }, 500);
-                    return;
-                }
-
-                // 其它错误继续抛出到控制台
-                console.error(err);
-            }
-        };
-
-        await startRightMenu();
+        try {
+            await initAttachmentQueueRightMenu();
+        } catch (e) {
+            console.warn('[Chat Queue] Init menu failed, retrying later');
+        }
         initAttachmentQueueSmartControls();
         initAttachmentQueueWandButton();
 
-        // 重写角色管理抽屉图标行为（与之前逻辑一致）
-        const $rightNavToggle = $('#unimportantYes');
-        if ($rightNavToggle.length) {
-            $rightNavToggle.off('click.stAttachmentQueue');
-            $rightNavToggle.off('click').on('click', async function () {
-                const $drawer = $('#right-nav-panel');
-                const isQueueVisible = $(`#${RIGHT_MENU_ID}`).is(':visible');
+        // 绑定图标
+        if (!$('#attachment_queue_icon').length) {
+            const iconHtml = `
+                <div id="attachment_queue_icon" class="drawer">
+                    <div class="drawer-toggle">
+                        <div class="drawer-icon fa-solid fa-layer-group fa-fw" title="聊天队列"></div>
+                    </div>
+                </div>`;
+            const $bg = $('#backgrounds-button');
+            if ($bg.length) $(iconHtml).insertAfter($bg);
+            else $('#top-settings-holder').append(iconHtml);
 
-                if (isQueueVisible) {
-                    // 显示角色列表
-                    $('.right_menu').hide();
-                    $('#rm_characters_block').show();
-                    $(window).trigger('resize');
-                } else {
-                    // 切换抽屉
-                    $drawer.toggleClass('openDrawer closedDrawer');
-                    $drawer.css('transform', '');
-                    $(window).trigger('resize');
-                }
+            $('#attachment_queue_icon .drawer-toggle').on('click', () => {
+                // 如果未初始化，再次尝试初始化
+                if (!$(`#${RIGHT_MENU_ID}`).length) initAttachmentQueueRightMenu();
+                toggleRightDrawer(RIGHT_MENU_ID);
             });
         }
     };
 
-    // ---------- 三重保险启动策略 ----------
-    // 保险 1：标准事件（APP_READY）
+    // 三重保险启动
     try {
-        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && typeof event_types.APP_READY !== 'undefined') {
+        if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined') {
             eventSource.on(event_types.APP_READY, entryPoint);
         }
-    } catch (e) {
-        // 忽略注册失败
-    }
+    } catch(e){}
 
-    // 保险 2：如果 DOM 元素已存在（表示我们来晚了），立即启动
-    const domAvailable = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
-    if (domAvailable) {
-        void entryPoint();
-        return;
-    }
+    const domAvailable = $('#top-settings-holder').length || $('#send_but').length;
+    if (domAvailable) void entryPoint();
 
-    // 保险 3：轮询，直到发现 Generate 或 eventSource 可用或关键 DOM 出现
     const poll = setInterval(() => {
-        const readyAPIs = (typeof Generate !== 'undefined' && typeof eventSource !== 'undefined' && typeof event_types !== 'undefined');
-        const domNow = $('#top-settings-holder').length || $('#rm_buttons_container').length || $('#attach_file_wand_container').length || $('#send_but').length;
-        if (readyAPIs || domNow) {
+        if ($('#send_but').length) {
             clearInterval(poll);
             void entryPoint();
         }
     }, 1000);
 });
 
-/**
- * 绑定拖拽排序事件
- * @param {JQuery} $row
- * @param {string} id
- */
-function bindDragAndDropEvents($row, id) {
-    $row.on('dragstart', (e) => {
-        dragSourceId = id;
-        $row.addClass('attachment-queue-item-dragging');
-
-        const dt = e.originalEvent?.dataTransfer;
-        if (dt) {
-            dt.effectAllowed = 'move';
-            dt.setData('text/plain', id);
-        }
-    });
-
-    $row.on('dragover', (e) => {
-        e.preventDefault();
-        const dt = e.originalEvent?.dataTransfer;
-        if (dt) {
-            dt.dropEffect = 'move';
-        }
-        $row.addClass('attachment-queue-item-dragover');
-    });
-
-    $row.on('dragleave', () => {
-        $row.removeClass('attachment-queue-item-dragover');
-    });
-
-    $row.on('dragend', () => {
-        $row.removeClass('attachment-queue-item-dragging attachment-queue-item-dragover');
-        dragSourceId = null;
-    });
-
-    $row.on('drop', (e) => {
-        e.preventDefault();
-        $row.removeClass('attachment-queue-item-dragover');
-
-        const dt = e.originalEvent?.dataTransfer;
-        const sourceId = dt?.getData('text/plain') || dragSourceId;
-        const targetId = id;
-
-        if (!sourceId || !targetId || sourceId === targetId) {
-            return;
-        }
-
-        reorderQueueById(sourceId, targetId);
-        renderQueueList();
-    });
-}
-
-/**
- * 根据拖拽结果重新排序队列
- * @param {string} sourceId
- * @param {string} targetId
- */
-function reorderQueueById(sourceId, targetId) {
-    const fromIndex = queue.findIndex(q => q.id === sourceId);
-    const toIndex = queue.findIndex(q => q.id === targetId);
-
-    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
-        return;
-    }
-
-    const [moved] = queue.splice(fromIndex, 1);
-    queue.splice(toIndex, 0, moved);
-
-    // 修正当前索引，避免越界
-    if (currentIndex === fromIndex) {
-        currentIndex = toIndex;
-    } else if (fromIndex < currentIndex && toIndex >= currentIndex) {
-        currentIndex -= 1;
-    } else if (fromIndex > currentIndex && toIndex <= currentIndex) {
-        currentIndex += 1;
-    }
-}
-
-// 模拟 ST 原生的侧边栏切换
-const toggleRightDrawer = (targetId) => {
-    const $drawer = $('#right-nav-panel');
-    const $content = $(`#${targetId}`);
-
-    // 如果目标已经是当前显示的，且抽屉是打开的 -> 关闭抽屉
-    if ($content.is(':visible') && $drawer.hasClass('openDrawer')) {
-        $drawer.removeClass('openDrawer').addClass('closedDrawer');
-        $drawer.css('transform', ''); // 清理可能的样式
-        return;
-    }
-
-    // 否则 -> 隐藏其他面板，显示目标面板，打开抽屉
-    $('.right_menu').hide();
-    $content.show();
-    $drawer.removeClass('closedDrawer').addClass('openDrawer');
-    // 触发 resize 事件以重绘 UI
-    $(window).trigger('resize');
-};
-
-// 内联工具函数：替代原先对 utils.js 的依赖
+// 内联工具函数
 const getBase64Async = (file) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
