@@ -359,8 +359,125 @@ async function uploadAndSend(item) {
             }
         }
 
-        console.log('[Chat Queue] Message sent, waiting for AI to complete via event listener...');
-        // 不再在这里等待，由全局 GENERATION_ENDED 事件监听器处理下一项
+        // 等待 generation_ended 事件触发（由 eventSource 驱动）
+        // 使用多种方式确保能检测到 AI 完成：事件监听 + DOM变化检测 + 状态检查
+        console.log('[Chat Queue] Waiting for AI generation to complete...');
+        await new Promise((resolve, reject) => {
+            let settled = false;
+
+            const onEnded = () => {
+                if (settled) return;
+                settled = true;
+                console.log('[Chat Queue] Generation completed detected');
+                resolve(true);
+            };
+
+            // 记录发送前的消息 DOM 元素数量
+            const initialMessageElements = document.querySelectorAll('.mes').length;
+            console.log('[Chat Queue] Initial .mes elements count:', initialMessageElements);
+
+            // 方法 1：监听 eventSource 事件
+            let eventSourceRegistered = false;
+            try {
+                if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && event_types.GENERATION_ENDED) {
+                    console.log('[Chat Queue] Registering GENERATION_ENDED event listener');
+                    const cb = () => { 
+                        console.log('[Chat Queue] GENERATION_ENDED event received');
+                        onEnded(); 
+                    };
+                    eventSource.once(event_types.GENERATION_ENDED, cb);
+                    eventSourceRegistered = true;
+                    // 清理包装：在 settled 后移除监听
+                    const cleanupInterval = setInterval(() => {
+                        if (settled) {
+                            try {
+                                eventSource.off && eventSource.off(event_types.GENERATION_ENDED, cb);
+                            } catch (e) {}
+                            clearInterval(cleanupInterval);
+                        }
+                    }, 200);
+                }
+            } catch (e) {
+                console.warn('[Chat Queue] Failed to register eventSource listener:', e.message);
+            }
+
+            if (!eventSourceRegistered) {
+                console.warn('[Chat Queue] eventSource not available, will use DOM detection fallback');
+            }
+
+            // 方法 2：轮询检测 DOM 中是否出现新消息（更可靠）
+            let pollAttempts = 0;
+            const pollInterval = setInterval(() => {
+                if (settled) {
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                pollAttempts++;
+                const currentMessageElements = document.querySelectorAll('.mes').length;
+
+                // 如果消息 DOM 元素增加，说明 AI 生成了回复
+                if (currentMessageElements > initialMessageElements) {
+                    console.log('[Chat Queue] Detected new message DOM. Initial:', initialMessageElements, 'Current:', currentMessageElements);
+
+                    // 等待 800ms 以确保消息完全渲染
+                    setTimeout(() => {
+                        if (!settled) {
+                            settled = true;
+                            console.log('[Chat Queue] Generation complete (DOM detection)');
+                            onEnded();
+                        }
+                    }, 800);
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                // 检查发送按钮是否从禁用恢复到启用
+                const sendBtn = document.getElementById('send_but');
+                if (sendBtn && !sendBtn.disabled && pollAttempts > 5) {
+                    console.log('[Chat Queue] Send button re-enabled, assuming generation complete');
+                    if (!settled) {
+                        settled = true;
+                        onEnded();
+                    }
+                    clearInterval(pollInterval);
+                    return;
+                }
+
+                if (pollAttempts % 15 === 0) {
+                    console.log('[Chat Queue] Polling... attempt', pollAttempts, '.mes element count:', currentMessageElements);
+                }
+            }, 200);
+
+            // 方法 3：监听发送按钮的禁用属性变化
+            const sendBtn = document.getElementById('send_but');
+            if (sendBtn) {
+                const observer = new MutationObserver((mutations) => {
+                    if (!settled && !sendBtn.disabled) {
+                        console.log('[Chat Queue] Send button enabled (MutationObserver)');
+                        clearInterval(pollInterval);
+                        settled = true;
+                        onEnded();
+                    }
+                });
+                
+                try {
+                    observer.observe(sendBtn, { attributes: true, attributeFilter: ['disabled'] });
+                } catch (e) {
+                    console.warn('[Chat Queue] MutationObserver setup failed:', e.message);
+                }
+            }
+
+            // 超时回退：30 秒后无论如何都继续
+            setTimeout(() => {
+                clearInterval(pollInterval);
+                if (settled) return;
+                settled = true;
+                console.warn('[Chat Queue] Generation wait timeout (30s), proceeding anyway. Poll attempts:', pollAttempts);
+                resolve(false);
+            }, 30000);
+        });
+        console.log('[Chat Queue] uploadAndSend finished (generation wait resolved)');
     } catch (error) {
         console.error('[Chat Queue] Send failed:', error);
         throw error;
@@ -372,17 +489,13 @@ async function uploadAndSend(item) {
  */
 async function processNext() {
     // 每次循环前检查是否仍在运行
-    if (!isRunning) {
-        console.log('[Chat Queue] Queue not running, skipping processNext');
-        return;
-    }
+    if (!isRunning) return;
 
     // 找到下一个待发送的文件（从第一个 pending 开始）
     const nextIndex = queue.findIndex(q => q.status === 'pending');
 
     if (nextIndex === -1) {
         // 没有待发送的文件了
-        console.log('[Chat Queue] No more pending items');
         isRunning = false;
         toastr.success('队列全部完成！');
         updateStatusText();
@@ -393,21 +506,26 @@ async function processNext() {
     currentIndex = nextIndex;
     const item = queue[currentIndex];
 
-    console.log('[Chat Queue] Starting to send item:', currentIndex, item.id);
     item.status = 'sending';
     renderQueueList();
 
     try {
-        // 直接调用发送，不等待完成
-        // 完成后由全局 GENERATION_ENDED 事件监听器驱动下一项
+        // --- 执行发送逻辑 ---
         await uploadAndSend(item);
+
+        // --- 等待 AI 回复完成 ---
+        // 我们不在这里死等，而是利用 EventSource 监听
+        // 设置一个标志位，等待 generation_ended 事件来触发下一次 processNext
+        // 这里只是为了保险，如果 60秒 没反应则超时
+        // 真正的递归调用移交给 eventSource 监听器
+
     } catch (err) {
         console.error('[Chat Queue] Error:', err);
         item.status = 'error';
         item.error = String(err);
         toastr.error(`项目 ${item.id} 发送失败`);
 
-        // 如果出错，立即标记为完成并继续下一个
+        // 如果出错，休息 1 秒继续下一个
         currentIndex++;
         setTimeout(() => {
             if (isRunning) void processNext();
@@ -615,17 +733,25 @@ async function initAttachmentQueueRightMenu() {
             cancelEditTextItem();
         });
 
-        // 注册 AI 回复结束事件，驱动队列继续（直接注册全局监听，参考 st-attachment-queue 模式）
+        // 注册 AI 回复结束事件，驱动队列继续（带保护与延迟注册）
         const registerGenerationEnded = () => {
             if (typeof eventSource === 'undefined' || typeof event_types === 'undefined' || !event_types.GENERATION_ENDED) {
-                console.log('[Chat Queue] eventSource not available yet');
+                console.log('[Chat Queue] eventSource not available for registration');
                 return false;
             }
 
-            console.log('[Chat Queue] Registering GENERATION_ENDED event listener');
+            console.log('[Chat Queue] Registering global GENERATION_ENDED handler');
+
+            // 使用一个标志防止重复注册
+            if (window._stChatQueueGenerationEndedRegistered) {
+                console.log('[Chat Queue] GENERATION_ENDED handler already registered');
+                return true;
+            }
+
+            window._stChatQueueGenerationEndedRegistered = true;
 
             eventSource.on(event_types.GENERATION_ENDED, () => {
-                console.log('[Chat Queue] GENERATION_ENDED event fired. isRunning:', isRunning, 'currentIndex:', currentIndex, 'queueLength:', queue.length);
+                console.log('[Chat Queue] GENERATION_ENDED event fired. isRunning:', isRunning, 'currentIndex:', currentIndex);
 
                 if (!isRunning) {
                     console.log('[Chat Queue] Queue not running, skipping');
@@ -633,7 +759,7 @@ async function initAttachmentQueueRightMenu() {
                 }
 
                 if (queue[currentIndex] && queue[currentIndex].status === 'sending') {
-                    console.log('[Chat Queue] Marking item as done:', queue[currentIndex].id);
+                    console.log('[Chat Queue] Marking current item as done');
                     queue[currentIndex].status = 'done';
                     currentIndex++;
                     renderQueueList();
@@ -641,21 +767,21 @@ async function initAttachmentQueueRightMenu() {
                     // 检查队列是否全部完成
                     if (currentIndex >= queue.length) {
                         console.log('[Chat Queue] All items completed');
+                        // 队列全部完成，停止运行并更新按钮状态
                         isRunning = false;
                         updateSmartControlsVisibility();
-                        toastr.success('队列全部完成！');
                         return;
                     }
 
+                    console.log('[Chat Queue] Processing next item...');
                     // 延迟 1 秒后处理下一个
-                    console.log('[Chat Queue] Processing next item in 1 second...');
                     setTimeout(() => {
                         if (isRunning) {
                             void processNext();
                         }
                     }, 1000);
                 } else {
-                    console.log('[Chat Queue] Item not in sending status or queue is empty');
+                    console.log('[Chat Queue] Current item not in sending status or queue empty');
                 }
             });
 
@@ -663,14 +789,9 @@ async function initAttachmentQueueRightMenu() {
         };
 
         if (!registerGenerationEnded()) {
-            console.log('[Chat Queue] Waiting for eventSource to be available...');
             const waiter = setInterval(() => {
                 if (registerGenerationEnded()) {
                     clearInterval(waiter);
-                    console.log('[Chat Queue] eventSource is now available, listener registered');
-                }
-            }, 500);
-        }
                 }
             }, 500);
         }
