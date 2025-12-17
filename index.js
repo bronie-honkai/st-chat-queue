@@ -361,28 +361,28 @@ async function uploadAndSend(item) {
 
         // 等待 generation_ended 事件触发（由 eventSource 驱动）
         // 使用多种方式确保能检测到 AI 完成：事件监听 + DOM变化检测 + 状态检查
-        console.log('[Chat Queue] Waiting for AI generation to complete...');
+        console.log('[Chat Queue] 📡 Waiting for AI generation to complete...');
         await new Promise((resolve, reject) => {
             let settled = false;
 
             const onEnded = () => {
                 if (settled) return;
                 settled = true;
-                console.log('[Chat Queue] Generation completed detected');
+                console.log('[Chat Queue] ✅ Generation completed detected');
                 resolve(true);
             };
 
             // 记录发送前的消息 DOM 元素数量
             const initialMessageElements = document.querySelectorAll('.mes').length;
-            console.log('[Chat Queue] Initial .mes elements count:', initialMessageElements);
+            console.log('[Chat Queue] Initial message count:', initialMessageElements);
 
             // 方法 1：监听 eventSource 事件
             let eventSourceRegistered = false;
             try {
                 if (typeof eventSource !== 'undefined' && typeof event_types !== 'undefined' && event_types.GENERATION_ENDED) {
-                    console.log('[Chat Queue] Registering GENERATION_ENDED event listener');
+                    console.log('[Chat Queue] 📡 Registering GENERATION_ENDED event');
                     const cb = () => { 
-                        console.log('[Chat Queue] GENERATION_ENDED event received');
+                        console.log('[Chat Queue] 📡 GENERATION_ENDED event received');
                         onEnded(); 
                     };
                     eventSource.once(event_types.GENERATION_ENDED, cb);
@@ -398,14 +398,14 @@ async function uploadAndSend(item) {
                     }, 200);
                 }
             } catch (e) {
-                console.warn('[Chat Queue] Failed to register eventSource listener:', e.message);
+                console.warn('[Chat Queue] ⚠️ Failed to register eventSource:', e.message);
             }
 
             if (!eventSourceRegistered) {
-                console.warn('[Chat Queue] eventSource not available, will use DOM detection fallback');
+                console.warn('[Chat Queue] ⚠️ eventSource unavailable, using DOM detection');
             }
 
-            // 方法 2：轮询检测 DOM 中是否出现新消息（更可靠）
+            // 方法 2：轮询检测 DOM 中是否出现新消息（备选方案）
             let pollAttempts = 0;
             const pollInterval = setInterval(() => {
                 if (settled) {
@@ -418,13 +418,13 @@ async function uploadAndSend(item) {
 
                 // 如果消息 DOM 元素增加，说明 AI 生成了回复
                 if (currentMessageElements > initialMessageElements) {
-                    console.log('[Chat Queue] Detected new message DOM. Initial:', initialMessageElements, 'Current:', currentMessageElements);
+                    console.log('[Chat Queue] ✅ Detected new message (count: ' + initialMessageElements + ' → ' + currentMessageElements + ')');
 
                     // 等待 800ms 以确保消息完全渲染
                     setTimeout(() => {
                         if (!settled) {
                             settled = true;
-                            console.log('[Chat Queue] Generation complete (DOM detection)');
+                            console.log('[Chat Queue] ✅ Generation complete (DOM detection)');
                             onEnded();
                         }
                     }, 800);
@@ -435,7 +435,7 @@ async function uploadAndSend(item) {
                 // 检查发送按钮是否从禁用恢复到启用
                 const sendBtn = document.getElementById('send_but');
                 if (sendBtn && !sendBtn.disabled && pollAttempts > 5) {
-                    console.log('[Chat Queue] Send button re-enabled, assuming generation complete');
+                    console.log('[Chat Queue] ✅ Send button enabled (generation complete)');
                     if (!settled) {
                         settled = true;
                         onEnded();
@@ -445,7 +445,7 @@ async function uploadAndSend(item) {
                 }
 
                 if (pollAttempts % 15 === 0) {
-                    console.log('[Chat Queue] Polling... attempt', pollAttempts, '.mes element count:', currentMessageElements);
+                    console.log('[Chat Queue] 🔄 Polling #' + pollAttempts + '... messages: ' + currentMessageElements);
                 }
             }, 200);
 
