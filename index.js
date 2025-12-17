@@ -754,7 +754,7 @@ jQuery(() => {
             return;
         }
 
-        eventSource.on(event_types.APP_READY, () => {
+        const doInitSetup = () => {
             void initAttachmentQueueRightMenu();
             initAttachmentQueueSmartControls();
             initAttachmentQueueWandButton();
@@ -786,7 +786,15 @@ jQuery(() => {
                     }
                 });
             }
-        });
+        };
+
+        // 如果 event_types.APP_READY 可用则注册；否则作为回退立即初始化
+        if (typeof event_types !== 'undefined' && typeof event_types.APP_READY !== 'undefined') {
+            eventSource.on(event_types.APP_READY, doInitSetup);
+        } else {
+            // 延迟执行到下一个任务周期，确保 DOM 已准备
+            setTimeout(doInitSetup, 0);
+        }
     };
 
     tryInit();
