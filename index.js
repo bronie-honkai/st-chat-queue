@@ -345,65 +345,73 @@ function waitForAiToFinish() {
  * 修改：添加更详细的日志，便于调试
  */
 async function uploadAndSend(item) {
-    console.log('[Chat Queue] 开始处理项目:', item.id);
+    console.log('[Chat Queue] --- uploadAndSend 开始 ---');
 
     // 1. 处理文件
     if (item.file) {
+        console.log('[Chat Queue] 处理文件:', item.file.name);
         const fileInput = document.getElementById('file_form_input');
         if (fileInput) {
             const dt = new DataTransfer();
             dt.items.add(item.file);
             fileInput.files = dt.files;
 
-            console.log('[Chat Queue] 文件已添加到输入框:', item.file.name);
+            console.log('[Chat Queue]   • 文件已添加到输入框');
             // 触发 change 事件，让 SillyTavern 识别并挂载附件
             $('#file_form_input').trigger('change');
 
             // 给予足够的时间让 ST 处理文件
             await new Promise(r => setTimeout(r, 800));
-            console.log('[Chat Queue] 文件处理完成，等待 UI 同步');
+            console.log('[Chat Queue]   ✓ 文件处理完成');
         }
     }
 
     // 2. 处理文本
-    const $textarea = $('#send_textarea');
-    if ($textarea.length) {
-        // 先清空，再设置值
-        $textarea.val('').trigger('input');
-        $textarea.val(item.text || '');
+    if (item.text && item.text.length > 0) {
+        console.log('[Chat Queue] 处理文本，长度:', item.text.length);
+        const $textarea = $('#send_textarea');
+        if ($textarea.length) {
+            // 先清空，再设置值
+            $textarea.val('').trigger('input');
+            $textarea.val(item.text || '');
 
-        console.log('[Chat Queue] 文本已设置:', item.text.substring(0, 50));
-        // 必须触发 input 和 change，ST 才会检测到内容
-        $textarea.trigger('input');
-        $textarea.trigger('change');
+            console.log('[Chat Queue]   • 文本已设置');
+            // 必须触发 input 和 change，ST 才会检测到内容
+            $textarea.trigger('input');
+            $textarea.trigger('change');
 
-        // 等待 UI 响应
-        await new Promise(r => setTimeout(r, 500));
-        console.log('[Chat Queue] 文本处理完成');
+            // 等待 UI 响应
+            await new Promise(r => setTimeout(r, 500));
+            console.log('[Chat Queue]   ✓ 文本处理完成');
+        }
+    } else {
+        console.log('[Chat Queue] 没有文本内容');
     }
 
     // 3. 点击发送按钮
+    console.log('[Chat Queue] 准备点击发送按钮');
     const $sendBtn = $('#send_but');
     if ($sendBtn.length) {
         // 尝试强行移除禁用类，防止 UI 状态滞后
         $sendBtn.removeClass('disabled').prop('disabled', false);
 
-        console.log('[Chat Queue] 发送按钮状态:', {
+        const btnState = {
             disabled: $sendBtn.prop('disabled'),
             hasDisabledClass: $sendBtn.hasClass('disabled'),
             innerHTML: $sendBtn.html().substring(0, 100)
-        });
+        };
+        console.log('[Chat Queue] 发送按钮状态:', btnState);
 
-        console.log('[Chat Queue] 正在点击发送按钮...');
+        console.log('[Chat Queue]   • 正在点击发送按钮...');
         // 优先使用原生 click
         try {
             $sendBtn[0].click();
-            console.log('[Chat Queue] 发送按钮点击成功');
+            console.log('[Chat Queue]   ✓ 发送按钮点击成功');
         } catch (e) {
-            console.error('[Chat Queue] 原生 click 失败，尝试 jQuery:', e.message);
+            console.warn('[Chat Queue]   ! 原生 click 失败，尝试 jQuery');
             try {
                 $sendBtn.trigger('click');
-                console.log('[Chat Queue] jQuery trigger 点击成功');
+                console.log('[Chat Queue]   ✓ jQuery trigger 点击成功');
             } catch (ee) {
                 throw new Error('点击发送按钮失败: ' + ee.message);
             }
@@ -411,6 +419,8 @@ async function uploadAndSend(item) {
     } else {
         throw new Error('找不到发送按钮 (#send_but)!');
     }
+
+    console.log('[Chat Queue] --- uploadAndSend 结束 ---');
 }
 
 /**
