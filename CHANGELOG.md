@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.18] - 2025-12-27
+
+### Added
+- **Paste Floor Button**: Added paste button next to "Add Floor" for direct clipboard content
+  - Quickly paste text from clipboard into a new queue item
+  - Perfect for importing long prompts or copied conversations
+  - Toast notifications for success/failure feedback
+  - Uses modern Clipboard API
+
+### Features
+- Fast queue building with clipboard integration
+- Streamlined workflow for text-based queue items
+
+---
+
 ## [1.0.17] - 2025-12-27
 
 ### Added

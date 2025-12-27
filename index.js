@@ -629,6 +629,10 @@ async function initAttachmentQueueRightMenu() {
                         <i class="fa-solid fa-plus"></i>
                         <span>新增楼层</span>
                     </button>
+                    <button id="attachment_queue_paste" type="button" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-paste"></i>
+                        <span>粘贴楼层</span>
+                    </button>
                     <button id="attachment_queue_clear" type="button" class="menu_button menu_button_icon menu_button-danger">
                         <i class="fa-solid fa-trash-can"></i>
                         <span>清空队列</span>
@@ -666,6 +670,22 @@ async function initAttachmentQueueRightMenu() {
         $('#attachment_queue_add_text').on('click', () => {
             const newId = addTextOnlyToQueue('');
             editTextItem(newId);
+        });
+
+        // "粘贴楼层"按钮：从剪贴板粘贴文本
+        $('#attachment_queue_paste').on('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text.trim()) {
+                    const newId = addTextOnlyToQueue(text);
+                    toastr.success('楼层粘贴成功');
+                } else {
+                    toastr.warning('剪贴板内容为空');
+                }
+            } catch (err) {
+                console.error('粘贴失败:', err);
+                toastr.error('粘贴失败，请检查权限或使用Ctrl+V手动粘贴');
+            }
         });
 
         // 保存文本
