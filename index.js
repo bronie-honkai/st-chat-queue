@@ -117,7 +117,19 @@ function renderQueueList() {
             $singleFileInput.trigger('click');
         });
 
-        $actions.append($eye, $editBtn, $attachBtn);
+        const $copyBtn = $('<button type="button" class="attachment-action-copy fa-regular fa-copy" title="复制项目" />');
+        $copyBtn.on('click', (e) => {
+            e.stopPropagation();
+            const textToCopy = item.text || '(空文本)';
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                toastr.success('已复制到剪贴板');
+            }).catch(err => {
+                console.error('复制失败:', err);
+                toastr.error('复制失败');
+            });
+        });
+
+        $actions.append($eye, $editBtn, $attachBtn, $copyBtn);
 
         const $remove = $('<button type="button" class="attachment-queue-item-remove fa-solid fa-xmark" title="移除" />');
         $remove.on('click', (e) => {
