@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.19] - 2025-12-27
+
+### Changed
+- **Copy/Paste Floor Enhancement**: Copy button now copies entire floor (text + attachments) to memory
+  - Paste button now pastes complete floor objects with all attachments
+  - Uses in-memory storage instead of clipboard for reliability
+  - Enables quick duplication of entire floors with all content intact
+
+### Features
+- Full floor duplication with file attachments preserved
+- Memory-based storage for robust copy/paste operations
+- Improved workflow for constructing similar queue items
+
+---
+
 ## [1.0.18] - 2025-12-27
 
 ### Added

@@ -9,6 +9,9 @@ let currentIndex = 0;
 // 当前拖拽源的队列项 id
 let dragSourceId = null;
 
+// 存储被复制的楼层对象（包括附件）
+let copiedFloor = null;
+
 const RIGHT_MENU_ID = 'attachment_queue_block';
 
 function updateStatusText() {
@@ -117,16 +120,15 @@ function renderQueueList() {
             $singleFileInput.trigger('click');
         });
 
-        const $copyBtn = $('<button type="button" class="attachment-action-copy fa-regular fa-copy" title="复制项目" />');
+        const $copyBtn = $('<button type="button" class="attachment-action-copy fa-regular fa-copy" title="复制整个楼层" />');
         $copyBtn.on('click', (e) => {
             e.stopPropagation();
-            const textToCopy = item.text || '(空文本)';
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                toastr.success('已复制到剪贴板');
-            }).catch(err => {
-                console.error('复制失败:', err);
-                toastr.error('复制失败');
-            });
+            // 复制整个楼层对象（包括附件）到内存
+            copiedFloor = {
+                text: item.text,
+                file: item.file  // File 对象可以直接保存在内存中
+            };
+            toastr.success('楼层已复制');
         });
 
         $actions.append($eye, $editBtn, $attachBtn, $copyBtn);
@@ -672,19 +674,30 @@ async function initAttachmentQueueRightMenu() {
             editTextItem(newId);
         });
 
-        // "粘贴楼层"按钮：从剪贴板粘贴文本
-        $('#attachment_queue_paste').on('click', async () => {
+        // "粘贴楼层"按钮：粘贴完整的楼层（包括附件）
+        $('#attachment_queue_paste').on('click', () => {
+            if (!copiedFloor) {
+                toastr.warning('未复制任何楼层');
+                return;
+            }
+            
             try {
-                const text = await navigator.clipboard.readText();
-                if (text.trim()) {
-                    const newId = addTextOnlyToQueue(text);
-                    toastr.success('楼层粘贴成功');
-                } else {
-                    toastr.warning('剪贴板内容为空');
-                }
+                // 创建新楼层，复制文本和附件
+                const now = Date.now();
+                const id = `${now}-pasted`;
+                const newItem = {
+                    id,
+                    text: copiedFloor.text || '',
+                    file: copiedFloor.file,  // 直接使用 File 对象
+                    status: 'pending'
+                };
+                queue.push(newItem);
+                renderQueueList();
+                updateSmartControlsVisibility();
+                toastr.success('楼层粘贴成功');
             } catch (err) {
                 console.error('粘贴失败:', err);
-                toastr.error('粘贴失败，请检查权限或使用Ctrl+V手动粘贴');
+                toastr.error('粘贴失败');
             }
         });
 
